@@ -161,20 +161,31 @@ def neural_bridge():
                 if (speakText) {{
                     // PHASE: SPEAKING
                     window.speechSynthesis.cancel();
-                    var msg = new SpeechSynthesisUtterance(speakText);
-                    var voices = window.speechSynthesis.getVoices();
-                    var target = voices.find(v => {{
-                        var n = v.name.toLowerCase();
-                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
-                        return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy');
-                    }});
-                    msg.voice = target || voices[0];
-                    msg.rate = 1.15;
-                    msg.onend = function() {{
-                        // Automatically start listening after speaking finishes
-                        setTimeout(startListening, 300);
+                    
+                    var attemptSpeak = function() {{
+                        var msg = new SpeechSynthesisUtterance(speakText);
+                        var voices = window.speechSynthesis.getVoices();
+                        
+                        if (voices.length === 0) {{
+                            setTimeout(attemptSpeak, 200);
+                            return;
+                        }}
+
+                        var target = voices.find(v => {{
+                            var n = v.name.toLowerCase();
+                            if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
+                            return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy') || n.includes('google uk english male');
+                        }});
+                        
+                        msg.voice = target || voices[0];
+                        msg.rate = 1.15;
+                        msg.onend = function() {{
+                            setTimeout(startListening, 300);
+                        }};
+                        window.speechSynthesis.speak(msg);
                     }};
-                    window.speechSynthesis.speak(msg);
+                    
+                    attemptSpeak();
                 }} else {{
                     // PHASE: LISTENING (Initial)
                     startListening();
