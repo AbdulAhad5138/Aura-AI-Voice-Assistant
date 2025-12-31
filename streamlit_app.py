@@ -6,9 +6,11 @@ import datetime
 import sqlite3
 import json
 import base64
+import io
 from pathlib import Path
 from groq import Groq
 from dotenv import load_dotenv
+from streamlit_mic_recorder import mic_recorder
 
 # Load Environment
 load_dotenv()
@@ -62,7 +64,6 @@ def get_vault_data():
 init_db()
 
 # Session States
-if 'active' not in st.session_state: st.session_state.active = False
 if 'history' not in st.session_state: st.session_state.history = []
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
 api_key_system = os.getenv("GROQ_API_KEY", "")
@@ -79,7 +80,7 @@ st.markdown("""
     .logo-img { width: 120px; margin: 0 auto; display: block; animation: float 4s infinite ease-in-out; }
     @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 
-    .orb-box { display: flex; justify-content: center; margin: 20px 0; }
+    .orb-box { display: flex; justify-content: center; margin: 10px 0; }
     .orb { width: 150px; height: 150px; border-radius: 50%; background: #0a0a0f; border: 1px solid #1a1a2e; transition: 0.5s; }
     .orb.active { background: #6366f1; box-shadow: 0 0 80px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
     .orb.speaking { background: #ec4899; box-shadow: 0 0 80px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
@@ -88,8 +89,9 @@ st.markdown("""
     
     .status { text-align: center; color: #818cf8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; font-size: 0.9rem; }
     .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 10px; font-size: 0.95rem; }
-    .stButton > button { border-radius: 20px; padding: 12px; font-weight: 700; background: #6366f1 !important; color: white !important; font-size: 1rem; }
-    .stop-btn button { background: #050505 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
+    
+    /* Center the mic recorder */
+    .mic-container { display: flex; justify-content: center; margin-bottom: 20px; }
     #MainMenu, footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
@@ -115,7 +117,7 @@ with st.sidebar:
         st.session_state.history = []
         st.rerun()
 
-# --- BROWSER VOICE ENGINE (LAG-FREE + IMPROVED GENDER MATCH) ---
+# --- BROWSER VOICE ENGINE ---
 def trigger_voice(text, voice_pref):
     gender = "female" if voice_pref == "Female" else "male"
     if text:
@@ -124,24 +126,20 @@ def trigger_voice(text, voice_pref):
                 function runSpeech() {{
                     var voices = window.speechSynthesis.getVoices();
                     var msg = new SpeechSynthesisUtterance({json.dumps(text)});
-                    
-                    // Comprehensive voice matching for Windows/Mac/Android/iOS
                     var targetVoice = voices.find(v => {{
                         var n = v.name.toLowerCase();
                         var g = '{gender}';
                         if (g === 'female') {{
-                            return n.includes('female') || n.includes('zira') || n.includes('samantha') || n.includes('google us english') || n.includes('nora') || n.includes('lisa');
+                            return n.includes('female') || n.includes('zira') || n.includes('samantha') || n.includes('google us english');
                         }} else {{
                             return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
                         }}
                     }});
-                    
                     msg.voice = targetVoice || voices[0];
                     msg.rate = 1.1; 
-                    window.speechSynthesis.cancel(); // Clear any pending speech
+                    window.speechSynthesis.cancel();
                     window.speechSynthesis.speak(msg);
                 }}
-
                 if (window.speechSynthesis.onvoiceschanged !== undefined) {{
                     window.speechSynthesis.onvoiceschanged = runSpeech;
                 }}
@@ -150,25 +148,58 @@ def trigger_voice(text, voice_pref):
         """
         st.components.v1.html(js_code, height=0)
 
-col1, col2, col3 = st.columns([1, 1, 1])
-with col2:
-    if not st.session_state.active:
-        if st.button("🔌 CONNECT PATH", use_container_width=True):
-            st.session_state.active = True; st.rerun()
-    else:
-        st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
-        if st.button("🛑 DISCONNECT", use_container_width=True):
-            st.session_state.active = False; st.session_state.speak_text = None; st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
 # Orb State
-status_msg = "READY"
-orb_class = "active" if st.session_state.active else ""
+status_msg = "AWAITING VOICE INPUT"
+orb_class = "active"
 if st.session_state.speak_text:
     orb_class = "speaking"; status_msg = "AURA IS RESPONDING"
 
 st.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 st.markdown(f'<div class="status">{status_msg}</div>', unsafe_allow_html=True)
+
+# --- VOICE RECORDER ---
+st.markdown('<div class="mic-container">', unsafe_allow_html=True)
+audio = mic_recorder(
+    start_prompt="🎙️ CLICK TO SPEAK",
+    stop_prompt="🛑 STOP RECORDING",
+    just_once=True,
+    use_container_width=False,
+    format="webm",
+    key='aura_mic'
+)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# --- PROCESSING ---
+if audio:
+    audio_bytes = audio['bytes']
+    if audio_bytes:
+        with st.spinner("Aura is thinking..."):
+            try:
+                # Convert bytes to audio
+                r = sr.Recognizer()
+                audio_file = io.BytesIO(audio_bytes)
+                with sr.AudioFile(audio_file) as source:
+                    audio_data = r.record(source)
+                
+                txt = r.recognize_google(audio_data)
+                st.session_state.history.append({"role": "user", "text": txt})
+                
+                # BRAIN (Groq)
+                client = Groq(api_key=api_key_system)
+                msgs = [{"role": "system", "content": "You are Aura. Be natural and very concise."}]
+                for turn in st.session_state.history[-4:]:
+                    msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+                
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+                answer = res.choices[0].message.content
+                
+                save_to_db(txt, answer)
+                st.session_state.history.append({"role": "bot", "text": answer})
+                st.session_state.speak_text = answer
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Could not understand: {str(e)}")
 
 # --- VOICE TRIGGER ---
 if st.session_state.speak_text:
@@ -190,41 +221,3 @@ if st.session_state.history:
         role = "👤 YOU" if msg['role'] == "user" else "✨ AURA"
         st.markdown(f'<div class="chat-card"><b style="color:{color};">{role}</b><br>{msg["text"]}</div>', unsafe_allow_html=True)
 
-# --- THE "ULRA-SMOOTH" LOOP ---
-if st.session_state.active:
-    if not api_key_system:
-        st.error("Missing API Key"); st.stop()
-
-    recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 300
-    recognizer.dynamic_energy_threshold = True
-    
-    # SPEED OPTIMIZATION: Faster thresholds for lower lag
-    recognizer.pause_threshold = 1.3 # Snappy but doesn't cut you off
-    recognizer.non_speaking_duration = 0.4
-    
-    try:
-        with sr.Microphone() as source:
-            # Faster calibration (0.4s instead of 0.8s)
-            recognizer.adjust_for_ambient_noise(source, duration=0.4)
-            audio = recognizer.listen(source, timeout=8, phrase_time_limit=15)
-        
-        txt = recognizer.recognize_google(audio)
-        st.session_state.history.append({"role": "user", "text": txt})
-        
-        # BRAIN (Groq)
-        client = Groq(api_key=api_key_system)
-        msgs = [{"role": "system", "content": "You are Aura. Be natural and very concise."}]
-        for turn in st.session_state.history[-4:]:
-            msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-        
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-        answer = res.choices[0].message.content
-        
-        save_to_db(txt, answer)
-        st.session_state.history.append({"role": "bot", "text": answer})
-        st.session_state.speak_text = answer
-        st.rerun()
-
-    except Exception:
-        time.sleep(0.05); st.rerun()
