@@ -64,7 +64,7 @@ if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
 
-# Hide GROQ API Key from UI (Load from .env or Secrets)
+# API Key loaded silently
 api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
@@ -91,16 +91,15 @@ st.markdown("""
     .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 15px; }
     
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
-    .stop-btn button { background: #000 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
+    .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
     #MainMenu, footer {visibility: hidden;}
     
-    /* Ensure chat history looks premium */
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Logo Display
+# Header
 if LOGO_PATH.exists():
     with open(LOGO_PATH, "rb") as f:
         logo_b64 = base64.b64encode(f.read()).decode()
@@ -129,15 +128,21 @@ def speak_out(text):
                 var msg = new SpeechSynthesisUtterance({json.dumps(text)});
                 var voices = window.speechSynthesis.getVoices();
                 
-                // Optimized voice finding for local systems
                 var target = voices.find(v => {{
                     var n = v.name.toLowerCase();
-                    if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
-                    return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
+                    if ('{gender}' === 'female') {{
+                        return n.includes('female') || n.includes('zira') || n.includes('aria') || 
+                               n.includes('samantha') || n.includes('linda') || n.includes('google us english') || 
+                               n.includes('microsoft zira') || n.includes('natural') || n.includes('premium');
+                    }} else {{
+                        return n.includes('male') || n.includes('david') || n.includes('alex') || 
+                               n.includes('microsoft david') || n.includes('google uk english male') || 
+                               n.includes('guy') || n.includes('natural');
+                    }}
                 }});
                 
                 msg.voice = target || voices[0];
-                msg.rate = 1.1; // Balanced speed
+                msg.rate = 1.15; // Slightly faster for snapiness
                 window.speechSynthesis.speak(msg);
             }}
 
@@ -150,11 +155,11 @@ def speak_out(text):
     """
     st.components.v1.html(js_code, height=0)
 
-# --- UI STATE HANDLING ---
+# Connect Button
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
-        if st.button("🔌 START NEURAL LINK"):
+        if st.button("🔌LETS START "):
             st.session_state.active = True
             st.rerun()
     else:
@@ -165,7 +170,7 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Orb & Status (Placeholders for real-time updates)
+# Placeholder for Orb/Status
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
@@ -179,6 +184,34 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {current_orb}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{current_status}</div>', unsafe_allow_html=True)
 
+# --- HISTORY DISPLAY (MOVED ABOVE LOOP FOR IMMEDIATE VIEWING) ---
+if st.session_state.history:
+    st.divider()
+    st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
+    # Natural order for reading, last 6
+    for m in st.session_state.history[-6:]:
+        color = "#6366f1" if m['role'] == 'user' else "#ec4899"
+        role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
+        st.markdown(f"""
+            <div class="chat-card" style="border-left: 4px solid {color}; shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
+                <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
+            </div>
+        """, unsafe_allow_html=True)
+
+# Vault (Sidebar option)
+if vault_toggle:
+    st.divider()
+    st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
+    vault = get_vault_data()
+    if vault:
+        for entry in vault:
+            with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
+                st.write(f"**Human:** {entry[1]}")
+                st.write(f"**Aura:** {entry[2]}")
+    else:
+        st.info("Vault is currently empty.")
+
 # --- THE CONTINUOUS NEURAL LOOP ---
 if st.session_state.active:
     import speech_recognition as sr
@@ -186,22 +219,20 @@ if st.session_state.active:
     # 1. Output Voice if needed
     if st.session_state.speak_text:
         speak_out(st.session_state.speak_text)
-        # Dynamic wait based on response length for better flow
-        wait_time = max(1.5, len(st.session_state.speak_text) / 16)
+        wait_time = max(1.2, len(st.session_state.speak_text) / 18) # Faster wait
         time.sleep(wait_time)
         st.session_state.speak_text = None
         st.rerun()
 
     # 2. Listen Phase
     r = sr.Recognizer()
-    # Optimized Alexa thresholds
-    r.energy_threshold = 350
+    r.energy_threshold = 300 # Slightly more sensitive
     r.dynamic_energy_threshold = True
-    r.pause_threshold = 1.6 # BALANCED SPEED: 1.6s silence detection
+    r.pause_threshold = 1.2 # FASTER: 1.2s silence vs 1.6s
     
     try:
         with sr.Microphone() as source:
-            r.adjust_for_ambient_noise(source, duration=0.4) # Fast noise adjustment
+            r.adjust_for_ambient_noise(source, duration=0.3) # Faster calibration
             status_placeholder.markdown(f'<div class="status" style="color:#6366f1;">👂 LISTENING...</div>', unsafe_allow_html=True)
             audio = r.listen(source, timeout=8, phrase_time_limit=15)
         
@@ -212,18 +243,12 @@ if st.session_state.active:
         if query:
             st.session_state.history.append({"role": "user", "text": query})
             
-            # Groq Brain (Hidden Key)
-            if not api_key:
-                st.error("GROQ_API_KEY missing in .env")
-                st.stop()
-                
             client = Groq(api_key=api_key)
-            msgs = [{"role": "system", "content": "You are Aura. Be concise, warm, and natural like Alexa. You remember history."}]
-            # Keep only last 10 messages for speed
-            for turn in st.session_state.history[-10:]:
+            msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. You remember history."}]
+            for turn in st.session_state.history[-8:]:
                 msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
             
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=120)
             answer = res.choices[0].message.content
             
             save_to_db(query, answer)
@@ -232,33 +257,5 @@ if st.session_state.active:
             st.rerun()
 
     except Exception:
-        # Retry loop if no voice detected
         time.sleep(0.05)
         st.rerun()
-
-# --- HISTORY DISPLAY (PREMIUM UI) ---
-if vault_toggle:
-    st.divider()
-    st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT (LONG-TERM MEMORY)</div>', unsafe_allow_html=True)
-    vault = get_vault_data()
-    if vault:
-        for entry in vault:
-            with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
-                st.write(f"**Human:** {entry[1]}")
-                st.write(f"**Aura:** {entry[2]}")
-    else:
-        st.info("Vault is currently empty.")
-
-if st.session_state.history:
-    st.divider()
-    st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES (CURRENT SESSION)</div>', unsafe_allow_html=True)
-    # Display in natural order but only last 6 for clarity
-    for m in st.session_state.history[-6:]:
-        color = "#6366f1" if m['role'] == 'user' else "#ec4899"
-        role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
-        st.markdown(f"""
-            <div class="chat-card" style="border-left: 4px solid {color}; shadow: 0 4px 12px rgba(0,0,0,0.5);">
-                <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
-                <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
-            </div>
-        """, unsafe_allow_html=True)
