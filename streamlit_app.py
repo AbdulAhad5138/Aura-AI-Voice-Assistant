@@ -63,9 +63,8 @@ init_db()
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
-if 'error_count' not in st.session_state: st.session_state.error_count = 0
 
-# API Key
+# API Key (Hidden)
 api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
@@ -96,6 +95,9 @@ st.markdown("""
     
     #MainMenu, footer {visibility: hidden;}
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    
+    /* Hidden elements for Bridge */
+    div[data-testid="stChatInput"] { position: fixed; bottom: -100px; display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,46 +118,100 @@ with st.sidebar:
         st.session_state.history = []
         st.session_state.active = False
         st.session_state.speak_text = None
-        st.session_state.error_count = 0
         st.rerun()
 
-# --- BI-DIRECTIONAL VOICE ENGINE ---
-def speak_out(text):
+# --- BI-DIRECTIONAL CLOUD BRIDGE (JS) ---
+def neural_bridge():
+    # Detect gender
     gender = v_identity.lower()
+    speak_text = st.session_state.speak_text if st.session_state.speak_text else ""
+    
+    # The bridge uses a hidden chat input to send data back to Python
+    # This works both locally and on Streamlit Cloud perfectly.
     js_code = f"""
         <script>
-            function speak() {{
-                window.speechSynthesis.cancel();
-                var msg = new SpeechSynthesisUtterance({json.dumps(text)});
-                var voices = window.speechSynthesis.getVoices();
-                
-                var target = voices.find(v => {{
-                    var n = v.name.toLowerCase();
-                    if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
-                    return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
-                }});
-                
-                msg.voice = target || voices[0];
-                msg.rate = 1.1;
-                window.speechSynthesis.speak(msg);
+            var isActive = {json.dumps(st.session_state.active)};
+            var speakText = {json.dumps(speak_text)};
+            var gender = "{gender}";
+
+            function sendToPython(text) {{
+                // Trick: Fill the chat input and simulate Enter
+                const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                if (input) {{
+                    input.value = text;
+                    const event = new Event('input', {{ bubbles: true }});
+                    input.dispatchEvent(event);
+                    const enterEvent = new KeyboardEvent('keydown', {{
+                        key: 'Enter', keyCode: 13, which: 13, bubbles: true
+                    }});
+                    input.dispatchEvent(enterEvent);
+                }}
             }}
 
-            if (window.speechSynthesis.getVoices().length > 0) {{
-                speak();
-            }} else {{
-                window.speechSynthesis.onvoiceschanged = speak;
+            function initAlexa() {{
+                if (!isActive) return;
+
+                if (speakText) {{
+                    // PHASE: SPEAKING
+                    window.speechSynthesis.cancel();
+                    var msg = new SpeechSynthesisUtterance(speakText);
+                    var voices = window.speechSynthesis.getVoices();
+                    var target = voices.find(v => {{
+                        var n = v.name.toLowerCase();
+                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
+                        return n.includes('male') || n.includes('david') || n.includes('alex');
+                    }});
+                    msg.voice = target || voices[0];
+                    msg.rate = 1.1;
+                    msg.onend = function() {{
+                        // Automatically listen after speaking
+                        setTimeout(listen, 300);
+                    }};
+                    window.speechSynthesis.speak(msg);
+                }} else {{
+                    // PHASE: LISTENING (Initial)
+                    listen();
+                }}
             }}
+
+            function listen() {{
+                if (!isActive) return;
+                var recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                recognition.lang = 'en-US';
+                recognition.continuous = false; // "Auto-Stop" on silence
+                recognition.interimResults = false;
+
+                recognition.onresult = function(e) {{
+                    var transcript = e.results[0][0].transcript;
+                    sendToPython(transcript);
+                }};
+
+                recognition.onerror = function(e) {{
+                    if (isActive) setTimeout(listen, 1000);
+                }};
+                
+                recognition.onend = function() {{
+                    // If recognition stopped without result, just restart
+                }};
+
+                recognition.start();
+            }}
+
+            // Start Cycle
+            if (window.speechSynthesis.onvoiceschanged !== undefined) {{
+                window.speechSynthesis.onvoiceschanged = initAlexa;
+            }}
+            setTimeout(initAlexa, 500);
         </script>
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect Button
+# --- UI CONTROLS ---
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
         if st.button("🔌LETS START "):
             st.session_state.active = True
-            st.session_state.error_count = 0
             st.rerun()
     else:
         st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
@@ -165,21 +221,49 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Placeholders
+# Placeholders for real-time status
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
-current_orb = "active" if st.session_state.active else ""
-current_status = "AURA IS LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
+orb_class = "active" if st.session_state.active else ""
+status_label = "LOCKED" if not st.session_state.active else "READY & LISTENING..."
 
 if st.session_state.speak_text:
-    current_orb = "speaking"
-    current_status = "AURA IS RESPONDING"
+    orb_class = "speaking"
+    status_label = "AURA IS RESPONDING"
 
-orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {current_orb}"></div></div>', unsafe_allow_html=True)
-status_placeholder.markdown(f'<div class="status">{current_status}</div>', unsafe_allow_html=True)
+orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
+status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# History Display
+# Catch Transcription from Bridge
+user_input = st.chat_input("Listening...")
+
+if user_input:
+    # Brain Phase
+    st.session_state.history.append({"role": "user", "text": user_input})
+    
+    client = Groq(api_key=api_key)
+    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and professional."}]
+    for turn in st.session_state.history[-8:]:
+        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+    
+    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+    answer = res.choices[0].message.content
+    
+    save_to_db(user_input, answer)
+    st.session_state.history.append({"role": "bot", "text": answer})
+    st.session_state.speak_text = answer
+    st.rerun()
+
+# --- TRIGGER THE BRIDGE ---
+if st.session_state.active:
+    neural_bridge()
+    # If we just triggered a speak_text, it should be cleared after JS starts
+    # But since Python reruns, we rely on the bridge receiving the latest state.
+    # We clear speak_text only after processing to prevent repeated speech on manual refreshes.
+    # Logic: If st.session_state.speak_text exists, JS will pick it up and speak.
+
+# --- HISTORY DISPLAY (NEWEST FIRST) ---
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
@@ -198,71 +282,7 @@ if vault_toggle:
     st.divider()
     st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
     vault = get_vault_data()
-    if vault:
-        for entry in vault:
-            with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
-                st.write(f"**Human:** {entry[1]}")
-                st.write(f"**Aura:** {entry[2]}")
-
-# --- THE SUPREME ROBUST LOOP ---
-if st.session_state.active:
-    import speech_recognition as sr
-    
-    # 1. Speak Phase
-    if st.session_state.speak_text:
-        speak_out(st.session_state.speak_text)
-        # Clear speaker flag but wait for audio to finish before listening
-        wait_time = max(1.5, len(st.session_state.speak_text) / 16)
-        time.sleep(wait_time)
-        st.session_state.speak_text = None
-        st.rerun()
-
-    # 2. Listen Phase
-    r = sr.Recognizer()
-    r.energy_threshold = 300
-    r.dynamic_energy_threshold = True
-    r.pause_threshold = 1.3 # Snappier Alexa-like delay
-    
-    try:
-        # Wrap everything in a try-block to catch hardware/API drops
-        with sr.Microphone() as source:
-            r.adjust_for_ambient_noise(source, duration=0.3)
-            status_placeholder.markdown(f'<div class="status" style="color:#6366f1;">👂 LISTENING...</div>', unsafe_allow_html=True)
-            audio = r.listen(source, timeout=10, phrase_time_limit=15)
-        
-        status_placeholder.markdown(f'<div class="status" style="color:#a855f7;">🧠 THINKING...</div>', unsafe_allow_html=True)
-        orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
-        
-        query = r.recognize_google(audio)
-        if query:
-            st.session_state.history.append({"role": "user", "text": query})
-            st.session_state.error_count = 0 # Reset error count on success
-            
-            client = Groq(api_key=api_key)
-            msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural."}]
-            for turn in st.session_state.history[-8:]:
-                msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-            
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-            answer = res.choices[0].message.content
-            
-            save_to_db(query, answer)
-            st.session_state.history.append({"role": "bot", "text": answer})
-            st.session_state.speak_text = answer
-            st.rerun()
-
-    except sr.WaitTimeoutError:
-        # No speech detected, just restart loop silently
-        st.rerun()
-    except sr.UnknownValueError:
-        # Detected sound but no words, restart loop
-        st.rerun()
-    except Exception as e:
-        # Major error (Mic disconnect, API drop, etc)
-        st.session_state.error_count += 1
-        if st.session_state.error_count > 5:
-            st.error(f"Critical System Failure. Please check your connection or microphone. Error: {e}")
-            st.session_state.active = False
-        else:
-            time.sleep(0.5) # Wait before retry
-            st.rerun()
+    for entry in vault:
+        with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
+            st.write(f"**Human:** {entry[1]}")
+            st.write(f"**Aura:** {entry[2]}")
