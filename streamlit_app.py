@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Mobile Supreme Alexa", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Supreme Alexa", page_icon="🤖", layout="wide")
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -63,7 +63,6 @@ init_db()
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
-if 'last_processed' not in st.session_state: st.session_state.last_processed = None
 
 # API Key
 api_key = os.getenv("GROQ_API_KEY", "")
@@ -94,9 +93,18 @@ st.markdown("""
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
     .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
-    /* NO KEYBOARD: Remove all text inputs */
-    #MainMenu, footer, div[data-testid="stChatInput"] { visibility: hidden; display: none !important; }
+    #MainMenu, footer {visibility: hidden;}
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+
+    /* ABSOHUTE STEALTH FIELD: Hide the chat input completely and make it untouchable */
+    div[data-testid="stChatInput"] { 
+        position: fixed; 
+        bottom: -1000px !important; 
+        left: -1000px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        height: 0px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -119,13 +127,11 @@ with st.sidebar:
         st.session_state.speak_text = None
         st.rerun()
 
-# --- THE HIDDEN NEURAL BRIDGE (NO INPUT/NO KEYBOARD) ---
+# --- THE BRIDGED NEURAL LOOP (NO REFRESH / NO KEYBOARD) ---
 def neural_bridge():
     gender = v_identity.lower()
     payload = st.session_state.speak_text if st.session_state.speak_text else ""
     
-    # We use a hidden iFrame and window.parent.location replacement to send data back
-    # without any text field focus, preventing the mobile keyboard.
     js_code = f"""
         <script>
             var isActive = {json.dumps(st.session_state.active)};
@@ -133,11 +139,20 @@ def neural_bridge():
             var gender = "{gender}";
 
             function bridgeToPython(text) {{
-                // NO TEXTBOX: Use Query Params to send data back to Python
-                const url = new URL(window.parent.location.href);
-                url.searchParams.set("transcript", text);
-                url.searchParams.set("ts", Date.now()); // Force refresh
-                window.parent.location.href = url.href;
+                const textArea = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                if (textArea) {{
+                    // Set readOnly to prevent keyboard popping if focused accidentally
+                    textArea.readOnly = true; 
+                    textArea.value = text;
+                    const event = new Event('input', {{ bubbles: true }});
+                    textArea.dispatchEvent(event);
+                    
+                    // Simulate Enter without focus
+                    const enterEvent = new KeyboardEvent('keydown', {{
+                        key: 'Enter', keyCode: 13, which: 13, bubbles: true
+                    }});
+                    textArea.dispatchEvent(enterEvent);
+                }}
             }}
 
             function runAuraCycle() {{
@@ -187,6 +202,7 @@ def neural_bridge():
                 r.start();
             }}
 
+            // Voices loading check
             if (window.speechSynthesis.onvoiceschanged !== undefined) {{
                 window.speechSynthesis.onvoiceschanged = runAuraCycle;
             }}
@@ -195,7 +211,7 @@ def neural_bridge():
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect
+# Connect Button
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
@@ -207,7 +223,6 @@ with col2:
         if st.button("🛑 DISCONNECT LINK"):
             st.session_state.active = False
             st.session_state.speak_text = None
-            st.query_params.clear()
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -225,36 +240,30 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# --- QUERY ENGINE (THE NO-KEYBOARD BRIDGE) ---
-params = st.query_params
-if "transcript" in params and st.session_state.active:
-    transcript = params["transcript"]
-    ts = params.get("ts", "")
+# THE STEALTH PROXY (Hidden chat input)
+user_input = st.chat_input("Processing...")
+
+if user_input and st.session_state.active:
+    # Brain Phase
+    st.session_state.history.append({"role": "user", "text": user_input})
     
-    # Only process if it's a new message
-    if ts != st.session_state.last_processed:
-        st.session_state.last_processed = ts
-        
-        # BRAIN PHASE
-        st.session_state.history.append({"role": "user", "text": transcript})
-        
-        client = Groq(api_key=api_key)
-        msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NEVER mention keyboards or text."}]
-        for turn in st.session_state.history[-8:]:
-            msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-        
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-        answer = res.choices[0].message.content
-        
-        save_to_db(transcript, answer)
-        st.session_state.history.append({"role": "bot", "text": answer})
-        st.session_state.speak_text = answer
-        # Clear query params for next turn
-        st.rerun()
+    client = Groq(api_key=api_key)
+    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NEVER mention keyboards or text."}]
+    for turn in st.session_state.history[-8:]:
+        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+    
+    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+    answer = res.choices[0].message.content
+    
+    save_to_db(user_input, answer)
+    st.session_state.history.append({"role": "bot", "text": answer})
+    st.session_state.speak_text = answer
+    st.rerun()
 
 # Trigger Neural Bridge
 if st.session_state.active:
     neural_bridge()
+    # Once rendered, clear speak_text for the NEXT potential rerun so it doesn't repeat
     st.session_state.speak_text = None
 
 # History
@@ -271,7 +280,7 @@ if st.session_state.history:
             </div>
         """, unsafe_allow_html=True)
 
-# Vault
+# Vault display
 if vault_toggle:
     st.divider()
     st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
