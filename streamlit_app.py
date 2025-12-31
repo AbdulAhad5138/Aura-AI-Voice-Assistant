@@ -130,9 +130,9 @@ def trigger_voice(text, voice_pref):
                         var n = v.name.toLowerCase();
                         var g = '{gender}';
                         if (g === 'female') {{
-                            return n.includes('female') || n.includes('zira') || n.includes('samantha') || n.includes('google us english');
+                            return n.includes('female') || n.includes('zira') || n.includes('samantha') || n.includes('google us english') || n.includes('aria') || n.includes('jenny');
                         }} else {{
-                            return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
+                            return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male') || n.includes('guy');
                         }}
                     }});
                     msg.voice = targetVoice || voices[0];
@@ -164,7 +164,7 @@ audio = mic_recorder(
     stop_prompt="🛑 STOP RECORDING",
     just_once=True,
     use_container_width=False,
-    format="webm",
+    format="wav",
     key='aura_mic'
 )
 st.markdown('</div>', unsafe_allow_html=True)
@@ -179,6 +179,7 @@ if audio:
                 r = sr.Recognizer()
                 audio_file = io.BytesIO(audio_bytes)
                 with sr.AudioFile(audio_file) as source:
+                    r.adjust_for_ambient_noise(source)
                     audio_data = r.record(source)
                 
                 txt = r.recognize_google(audio_data)

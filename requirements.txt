@@ -1,6 +1,9 @@
 groq
 python-dotenv
+Pillow
 streamlit
+pyperclip
+google-generativeai
 streamlit-mic-recorder
 SpeechRecognition
-Pillow
+pydub
