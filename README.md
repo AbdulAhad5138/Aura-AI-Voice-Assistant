@@ -9,7 +9,7 @@ Aura is a premium, high-performance voice assistant built with **Streamlit** and
 ## ✨ Key Features
 
 - **🚀 Ultra-Smooth Performance**: Optimized low-latency loop for near-instant responses.
-- **🎙️ Advanced Voice Recognition**: Uses Google Speech Recognition with dynamic energy thresholds.
+- **🎙️ Web-Based Voice Recording**: Uses `streamlit-mic-recorder` for seamless browser-to-server audio transfer.
 - **🔊 Multi-Identity Speech**: Switch between male and female voice identities with browser-optimized synthesis.
 - **🏛️ History Vault**: Persistently saves conversations in a local SQLite database for future reference.
 - **🎨 Premium UI/UX**: Custom CSS with glassmorphism, pulse animations, and a responsive luxury layout.
