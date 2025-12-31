@@ -63,8 +63,9 @@ init_db()
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
+if 'error_count' not in st.session_state: st.session_state.error_count = 0
 
-# API Key loaded silently
+# API Key
 api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
@@ -88,18 +89,17 @@ st.markdown("""
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
     
     .status { text-align: center; color: #818cf8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; font-size: 1rem; }
-    .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 15px; }
+    .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 15px; border-left: 4px solid #333; }
     
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
     .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
     #MainMenu, footer {visibility: hidden;}
-    
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Header
+# Logo
 if LOGO_PATH.exists():
     with open(LOGO_PATH, "rb") as f:
         logo_b64 = base64.b64encode(f.read()).decode()
@@ -116,6 +116,7 @@ with st.sidebar:
         st.session_state.history = []
         st.session_state.active = False
         st.session_state.speak_text = None
+        st.session_state.error_count = 0
         st.rerun()
 
 # --- BI-DIRECTIONAL VOICE ENGINE ---
@@ -130,19 +131,12 @@ def speak_out(text):
                 
                 var target = voices.find(v => {{
                     var n = v.name.toLowerCase();
-                    if ('{gender}' === 'female') {{
-                        return n.includes('female') || n.includes('zira') || n.includes('aria') || 
-                               n.includes('samantha') || n.includes('linda') || n.includes('google us english') || 
-                               n.includes('microsoft zira') || n.includes('natural') || n.includes('premium');
-                    }} else {{
-                        return n.includes('male') || n.includes('david') || n.includes('alex') || 
-                               n.includes('microsoft david') || n.includes('google uk english male') || 
-                               n.includes('guy') || n.includes('natural');
-                    }}
+                    if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
+                    return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
                 }});
                 
                 msg.voice = target || voices[0];
-                msg.rate = 1.15; // Slightly faster for snapiness
+                msg.rate = 1.1;
                 window.speechSynthesis.speak(msg);
             }}
 
@@ -161,6 +155,7 @@ with col2:
     if not st.session_state.active:
         if st.button("🔌LETS START "):
             st.session_state.active = True
+            st.session_state.error_count = 0
             st.rerun()
     else:
         st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
@@ -170,7 +165,7 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Placeholder for Orb/Status
+# Placeholders
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
@@ -184,22 +179,21 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {current_orb}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{current_status}</div>', unsafe_allow_html=True)
 
-# --- HISTORY DISPLAY (MOVED ABOVE LOOP FOR IMMEDIATE VIEWING) ---
+# History Display
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
-    # REVERSED ORDER: Newest first
     for m in reversed(st.session_state.history[-6:]):
         color = "#6366f1" if m['role'] == 'user' else "#ec4899"
         role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
         st.markdown(f"""
-            <div class="chat-card" style="border-left: 4px solid {color}; shadow: 0 4px 12px rgba(0,0,0,0.5);">
-                <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
-                <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
+            <div class="chat-card" style="border-left: 4px solid {color};">
+                <b style="color:{color};">{role_label}</b><br>
+                <span>{m["text"]}</span>
             </div>
         """, unsafe_allow_html=True)
 
-# Vault (Sidebar option)
+# Vault
 if vault_toggle:
     st.divider()
     st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
@@ -209,32 +203,32 @@ if vault_toggle:
             with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
                 st.write(f"**Human:** {entry[1]}")
                 st.write(f"**Aura:** {entry[2]}")
-    else:
-        st.info("Vault is currently empty.")
 
-# --- THE CONTINUOUS NEURAL LOOP ---
+# --- THE SUPREME ROBUST LOOP ---
 if st.session_state.active:
     import speech_recognition as sr
     
-    # 1. Output Voice if needed
+    # 1. Speak Phase
     if st.session_state.speak_text:
         speak_out(st.session_state.speak_text)
-        wait_time = max(1.2, len(st.session_state.speak_text) / 18) # Faster wait
+        # Clear speaker flag but wait for audio to finish before listening
+        wait_time = max(1.5, len(st.session_state.speak_text) / 16)
         time.sleep(wait_time)
         st.session_state.speak_text = None
         st.rerun()
 
     # 2. Listen Phase
     r = sr.Recognizer()
-    r.energy_threshold = 300 # Slightly more sensitive
+    r.energy_threshold = 300
     r.dynamic_energy_threshold = True
-    r.pause_threshold = 1.2 # FASTER: 1.2s silence vs 1.6s
+    r.pause_threshold = 1.3 # Snappier Alexa-like delay
     
     try:
+        # Wrap everything in a try-block to catch hardware/API drops
         with sr.Microphone() as source:
-            r.adjust_for_ambient_noise(source, duration=0.3) # Faster calibration
+            r.adjust_for_ambient_noise(source, duration=0.3)
             status_placeholder.markdown(f'<div class="status" style="color:#6366f1;">👂 LISTENING...</div>', unsafe_allow_html=True)
-            audio = r.listen(source, timeout=8, phrase_time_limit=15)
+            audio = r.listen(source, timeout=10, phrase_time_limit=15)
         
         status_placeholder.markdown(f'<div class="status" style="color:#a855f7;">🧠 THINKING...</div>', unsafe_allow_html=True)
         orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
@@ -242,13 +236,14 @@ if st.session_state.active:
         query = r.recognize_google(audio)
         if query:
             st.session_state.history.append({"role": "user", "text": query})
+            st.session_state.error_count = 0 # Reset error count on success
             
             client = Groq(api_key=api_key)
-            msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. You remember history."}]
+            msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural."}]
             for turn in st.session_state.history[-8:]:
                 msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
             
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=120)
+            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
             answer = res.choices[0].message.content
             
             save_to_db(query, answer)
@@ -256,6 +251,18 @@ if st.session_state.active:
             st.session_state.speak_text = answer
             st.rerun()
 
-    except Exception:
-        time.sleep(0.05)
+    except sr.WaitTimeoutError:
+        # No speech detected, just restart loop silently
         st.rerun()
+    except sr.UnknownValueError:
+        # Detected sound but no words, restart loop
+        st.rerun()
+    except Exception as e:
+        # Major error (Mic disconnect, API drop, etc)
+        st.session_state.error_count += 1
+        if st.session_state.error_count > 5:
+            st.error(f"Critical System Failure. Please check your connection or microphone. Error: {e}")
+            st.session_state.active = False
+        else:
+            time.sleep(0.5) # Wait before retry
+            st.rerun()
