@@ -5,15 +5,18 @@ import datetime
 import sqlite3
 import json
 import base64
+import io
 from pathlib import Path
 from groq import Groq
 from dotenv import load_dotenv
+from streamlit_mic_recorder import mic_recorder
+import speech_recognition as sr
 
 # Load Environment
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Universal Alexa", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Supreme Alexa", page_icon="🤖", layout="wide")
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -64,7 +67,7 @@ if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
 
-# API Key (Hidden)
+# API Key
 api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
@@ -82,7 +85,6 @@ st.markdown("""
     .orb-box { display: flex; justify-content: center; margin: 20px 0; }
     .orb { width: 150px; height: 150px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; position: relative; }
     .orb.active { background: #6366f1; box-shadow: 0 0 100px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
-    .orb.thinking { background: #a855f7; box-shadow: 0 0 100px rgba(168, 85, 247, 0.4); animation: pulse 1s infinite alternate; }
     .orb.speaking { background: #ec4899; box-shadow: 0 0 100px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
     
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
@@ -95,13 +97,19 @@ st.markdown("""
     
     #MainMenu, footer {visibility: hidden;}
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-    
-    /* Hide the technical chat input used as a data bridge */
-    div[data-testid="stChatInput"] { position: fixed; bottom: -100px; opacity: 0; pointer-events: none; }
+
+    /* Stealth Mic Button: Hide it but leave it clickable for JS */
+    div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] + div button:has(div:contains("🎙️")) {
+        opacity: 0;
+        height: 1px;
+        width: 1px;
+        position: absolute;
+        top: -100px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Header
+# Logo
 if LOGO_PATH.exists():
     with open(LOGO_PATH, "rb") as f:
         logo_b64 = base64.b64encode(f.read()).decode()
@@ -120,92 +128,56 @@ with st.sidebar:
         st.session_state.speak_text = None
         st.rerun()
 
-# --- THE SUPREME NEURAL BRIDGE (JS) ---
-def neural_bridge():
+# --- BI-DIRECTIONAL VOICE ENGINE (JS) ---
+def trigger_voice_and_auto_listen():
     gender = v_identity.lower()
-    # If we have something to say, pass it to JS
-    speak_payload = st.session_state.speak_text if st.session_state.speak_text else ""
+    payload = st.session_state.speak_text if st.session_state.speak_text else ""
     
     js_code = f"""
         <script>
             var isActive = {json.dumps(st.session_state.active)};
-            var speakText = {json.dumps(speak_payload)};
+            var speakText = {json.dumps(payload)};
             var gender = "{gender}";
 
-            function bridgeToPython(text) {{
-                const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                if (input) {{
-                    input.value = text;
-                    const event = new Event('input', {{ bubbles: true }});
-                    input.dispatchEvent(event);
-                    const enterEvent = new KeyboardEvent('keydown', {{
-                        key: 'Enter', keyCode: 13, which: 13, bubbles: true
-                    }});
-                    input.dispatchEvent(enterEvent);
+            function autoClickMic() {{
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (let btn of buttons) {{
+                    if (btn.innerText.includes('🎙️')) {{
+                        btn.click();
+                        break;
+                    }}
                 }}
             }}
 
-            function runCycle() {{
+            function runAura() {{
                 if (!isActive) return;
 
                 if (speakText) {{
-                    // PHASE: SPEAKING
                     window.speechSynthesis.cancel();
                     var msg = new SpeechSynthesisUtterance(speakText);
                     var voices = window.speechSynthesis.getVoices();
                     var target = voices.find(v => {{
                         var n = v.name.toLowerCase();
-                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
+                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('linda');
                         return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy');
                     }});
                     msg.voice = target || voices[0];
                     msg.rate = 1.1;
                     msg.onend = function() {{
-                        // Automatically start listening after speaking finishes
-                        setTimeout(startListening, 300);
+                        // Once Aura is done speaking, click the mic to listen again
+                        setTimeout(autoClickMic, 400);
                     }};
                     window.speechSynthesis.speak(msg);
                 }} else {{
-                    // PHASE: LISTENING (Initial)
-                    startListening();
+                    // Initial listen if no speak text
+                    setTimeout(autoClickMic, 500);
                 }}
             }}
 
-            function startListening() {{
-                if (!isActive) return;
-                var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) {{
-                    console.error("Browser does not support Speech Recognition.");
-                    return;
-                }}
-                
-                var recognition = new SpeechRecognition();
-                recognition.lang = 'en-US';
-                recognition.continuous = false; // Auto-stop on silence (Alexa behavior)
-                recognition.interimResults = false;
-
-                recognition.onresult = function(e) {{
-                    var transcript = e.results[0][0].transcript;
-                    bridgeToPython(transcript);
-                }};
-
-                recognition.onerror = function(e) {{
-                    console.log("Recognition Error:", e.error);
-                    if (isActive) setTimeout(startListening, 1000);
-                }};
-                
-                recognition.onend = function() {{
-                    // If recognition stopped without a result, just restart
-                }};
-
-                recognition.start();
-            }}
-
-            // Voices loading check
             if (window.speechSynthesis.onvoiceschanged !== undefined) {{
-                window.speechSynthesis.onvoiceschanged = runCycle;
+                window.speechSynthesis.onvoiceschanged = runAura;
             }}
-            setTimeout(runCycle, 500);
+            setTimeout(runAura, 800);
         </script>
     """
     st.components.v1.html(js_code, height=0)
@@ -225,12 +197,12 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Placeholders for status/orb
+# Status & Orb
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
 orb_class = "active" if st.session_state.active else ""
-status_label = "AURA IS LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
+status_label = "AURA IS READY" if st.session_state.active else "SYSTEM OFFLINE"
 
 if st.session_state.speak_text:
     orb_class = "speaking"
@@ -239,36 +211,55 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# Data Bridge: Listen for transcription from JS
-user_input = st.chat_input("Listening...")
+# --- STEALTH MIC RECORDER (Hidden) ---
+# This serves as the hardware interface for both Local and Cloud
+st.markdown('<div style="display:none;">', unsafe_allow_html=True)
+audio_input = mic_recorder(
+    start_prompt="🎙️",
+    stop_prompt="🛑",
+    just_once=True,
+    format="wav",
+    key='aura_supreme_mic'
+)
+st.markdown('</div>', unsafe_allow_html=True)
 
-if user_input:
-    # BRAIN PHASE
-    st.session_state.history.append({"role": "user", "text": user_input})
-    
-    client = Groq(api_key=api_key)
-    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. You remember history."}]
-    for turn in st.session_state.history[-8:]:
-        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-    
-    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-    answer = res.choices[0].message.content
-    
-    save_to_db(user_input, answer)
-    st.session_state.history.append({"role": "bot", "text": answer})
-    st.session_state.speak_text = answer
-    st.rerun()
+# --- BRAIN PROCESSING ---
+if audio_input and st.session_state.active:
+    audio_bytes = audio_input['bytes']
+    if audio_bytes:
+        try:
+            r = sr.Recognizer()
+            audio_stream = io.BytesIO(audio_bytes)
+            with sr.AudioFile(audio_stream) as source:
+                r.adjust_for_ambient_noise(source, duration=0.2)
+                audio_data = r.record(source)
+            
+            transcript = r.recognize_google(audio_data)
+            if transcript:
+                st.session_state.history.append({"role": "user", "text": transcript})
+                
+                client = Groq(api_key=api_key)
+                msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. You remember history."}]
+                for turn in st.session_state.history[-8:]:
+                    msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+                
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+                answer = res.choices[0].message.content
+                
+                save_to_db(transcript, answer)
+                st.session_state.history.append({"role": "bot", "text": answer})
+                st.session_state.speak_text = answer
+                st.rerun()
+        except:
+            # Silent retry if no words found
+            st.rerun()
 
-# Trigger Neural Bridge if active
+# Trigger the Loop
 if st.session_state.active:
-    neural_bridge()
-    # Note: st.session_state.speak_text is NOT cleared here because JS needs it to speak.
-    # It will stay in state until the NEXT user_input overrides it.
-    # But wait, if JS speaks and then listens, we need to clear speak_text after one spoken event.
-    # We clear it by setting it to None AFTER the bridge has been rendered and sent to JS.
+    trigger_voice_and_auto_listen()
     st.session_state.speak_text = None
 
-# --- HISTORY DISPLAY (NEWEST FIRST) ---
+# --- HISTORY DISPLAY (Newest First) ---
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
