@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Aura Data
+aura_data/
+aura_vault.db
+chat_history.json
+conversation_*.txt
+
+# IDEs
+.vscode/
+.idea/
