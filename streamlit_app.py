@@ -188,8 +188,8 @@ status_placeholder.markdown(f'<div class="status">{current_status}</div>', unsaf
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
-    # Natural order for reading, last 6
-    for m in st.session_state.history[-6:]:
+    # REVERSED ORDER: Newest first
+    for m in reversed(st.session_state.history[-6:]):
         color = "#6366f1" if m['role'] == 'user' else "#ec4899"
         role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
         st.markdown(f"""
