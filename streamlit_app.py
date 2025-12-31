@@ -63,6 +63,7 @@ init_db()
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
+if 'thinking' not in st.session_state: st.session_state.thinking = False
 
 # API Key
 api_key = os.getenv("GROQ_API_KEY", "")
@@ -96,14 +97,13 @@ st.markdown("""
     #MainMenu, footer {visibility: hidden;}
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 
-    /* ABSOHUTE STEALTH FIELD: Hide the chat input completely and make it untouchable */
-    div[data-testid="stChatInput"] { 
-        position: fixed; 
-        bottom: -1000px !important; 
-        left: -1000px !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-        height: 0px !important;
+    /* HIDE CHAT INPUT BUT KEEP ACCESSIBLE */
+    div[data-testid="stChatInput"] {
+        position: fixed;
+        bottom: -50px;
+        opacity: 0;
+        z-index: -100;
+        pointer-events: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -125,9 +125,10 @@ with st.sidebar:
         st.session_state.history = []
         st.session_state.active = False
         st.session_state.speak_text = None
+        st.session_state.thinking = False
         st.rerun()
 
-# --- THE BRIDGED NEURAL LOOP (NO REFRESH / NO KEYBOARD) ---
+# --- THE SUPREME NEURAL BRIDGE (STABLE DATA LINK) ---
 def neural_bridge():
     gender = v_identity.lower()
     payload = st.session_state.speak_text if st.session_state.speak_text else ""
@@ -138,49 +139,53 @@ def neural_bridge():
             var speakText = {json.dumps(payload)};
             var gender = "{gender}";
 
-            function bridgeToPython(text) {{
+            function pushResult(transcript) {{
                 const textArea = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                if (textArea) {{
-                    // Set readOnly to prevent keyboard popping if focused accidentally
-                    textArea.readOnly = true; 
-                    textArea.value = text;
-                    const event = new Event('input', {{ bubbles: true }});
-                    textArea.dispatchEvent(event);
-                    
-                    // Simulate Enter without focus
-                    const enterEvent = new KeyboardEvent('keydown', {{
+                const submitButton = window.parent.document.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                
+                if (textArea && submitButton) {{
+                    textArea.value = transcript;
+                    textArea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setTimeout(() => {{
+                        submitButton.click();
+                    }}, 100);
+                }} else if (textArea) {{
+                    // Fallback to Enter simulation
+                    textArea.value = transcript;
+                    textArea.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    const enter = new KeyboardEvent('keydown', {{
                         key: 'Enter', keyCode: 13, which: 13, bubbles: true
                     }});
-                    textArea.dispatchEvent(enterEvent);
+                    textArea.dispatchEvent(enter);
                 }}
             }}
 
-            function runAuraCycle() {{
+            function runAura() {{
                 if (!isActive) return;
 
                 if (speakText) {{
                     window.speechSynthesis.cancel();
-                    var attemptSpeak = function() {{
+                    var attempt = function() {{
                         var voices = window.speechSynthesis.getVoices();
-                        if (voices.length === 0) {{ setTimeout(attemptSpeak, 200); return; }}
+                        if (voices.length === 0) {{ setTimeout(attempt, 200); return; }}
                         var msg = new SpeechSynthesisUtterance(speakText);
                         var target = voices.find(v => {{
                             var n = v.name.toLowerCase();
-                            if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria');
-                            return n.includes('male') || n.includes('david') || n.includes('alex');
+                            if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
+                            return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy');
                         }});
                         msg.voice = target || voices[0];
                         msg.rate = 1.15;
-                        msg.onend = function() {{ setTimeout(startListening, 300); }};
+                        msg.onend = function() {{ setTimeout(listen, 400); }};
                         window.speechSynthesis.speak(msg);
                     }};
-                    attemptSpeak();
+                    attempt();
                 }} else {{
-                    startListening();
+                    listen();
                 }}
             }}
 
-            function startListening() {{
+            function listen() {{
                 if (!isActive) return;
                 var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (!Recognition) return;
@@ -191,38 +196,39 @@ def neural_bridge():
                 r.interimResults = false;
 
                 r.onresult = function(e) {{
-                    var transcript = e.results[0][0].transcript;
-                    bridgeToPython(transcript);
+                    var t = e.results[0][0].transcript;
+                    pushResult(t);
                 }};
 
                 r.onerror = function(e) {{
-                    if (isActive) setTimeout(startListening, 1000);
+                    if (isActive) setTimeout(listen, 1000);
                 }};
 
                 r.start();
             }}
 
-            // Voices loading check
             if (window.speechSynthesis.onvoiceschanged !== undefined) {{
-                window.speechSynthesis.onvoiceschanged = runAuraCycle;
+                window.speechSynthesis.onvoiceschanged = runAura;
             }}
-            setTimeout(runAuraCycle, 500);
+            setTimeout(runAura, 800);
         </script>
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect Button
+# Connect
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
         if st.button("🔌LETS START "):
             st.session_state.active = True
+            st.session_state.thinking = False
             st.rerun()
     else:
         st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
         if st.button("🛑 DISCONNECT LINK"):
             st.session_state.active = False
             st.session_state.speak_text = None
+            st.session_state.thinking = False
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -231,20 +237,27 @@ orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
 orb_class = "active" if st.session_state.active else ""
-status_label = "AURA IS LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
+status_label = "AURA IS READY & LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
 
-if st.session_state.speak_text:
+if st.session_state.thinking:
+    orb_class = "thinking"
+    status_label = "AURA IS THINKING..."
+elif st.session_state.speak_text:
     orb_class = "speaking"
     status_label = "AURA IS RESPONDING"
 
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# THE STEALTH PROXY (Hidden chat input)
-user_input = st.chat_input("Processing...")
+# --- BRAIN PROCESSING (VOICE GATEWAY) ---
+user_input = st.chat_input("Processing Neural Link...")
 
 if user_input and st.session_state.active:
-    # Brain Phase
+    st.session_state.thinking = True
+    # Re-render status immediately
+    orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
+    status_placeholder.markdown(f'<div class="status">AURA IS THINKING...</div>', unsafe_allow_html=True)
+    
     st.session_state.history.append({"role": "user", "text": user_input})
     
     client = Groq(api_key=api_key)
@@ -252,18 +265,22 @@ if user_input and st.session_state.active:
     for turn in st.session_state.history[-8:]:
         msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
     
-    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-    answer = res.choices[0].message.content
+    try:
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+        answer = res.choices[0].message.content
+        
+        save_to_db(user_input, answer)
+        st.session_state.history.append({"role": "bot", "text": answer})
+        st.session_state.speak_text = answer
+    except:
+        st.session_state.speak_text = "I encountered a neural hiccup. Please try again."
     
-    save_to_db(user_input, answer)
-    st.session_state.history.append({"role": "bot", "text": answer})
-    st.session_state.speak_text = answer
+    st.session_state.thinking = False
     st.rerun()
 
 # Trigger Neural Bridge
 if st.session_state.active:
     neural_bridge()
-    # Once rendered, clear speak_text for the NEXT potential rerun so it doesn't repeat
     st.session_state.speak_text = None
 
 # History
@@ -280,7 +297,7 @@ if st.session_state.history:
             </div>
         """, unsafe_allow_html=True)
 
-# Vault display
+# Vault
 if vault_toggle:
     st.divider()
     st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
