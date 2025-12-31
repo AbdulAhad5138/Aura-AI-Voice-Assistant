@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "aura_data"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = DATA_DIR / "aura_vault.db"
-LOGO_PATH = DATA_DIR / "logo.png"
+LOGO_PATH = BASE_DIR / "assets" / "logo.png"
 
 def init_db():
     try:
