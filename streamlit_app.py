@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Supreme Alexa", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Mobile Supreme Alexa", page_icon="🤖", layout="wide")
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -63,6 +63,7 @@ init_db()
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
+if 'last_processed' not in st.session_state: st.session_state.last_processed = None
 
 # API Key
 api_key = os.getenv("GROQ_API_KEY", "")
@@ -93,18 +94,9 @@ st.markdown("""
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
     .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
-    #MainMenu, footer {visibility: hidden;}
+    /* NO KEYBOARD: Remove all text inputs */
+    #MainMenu, footer, div[data-testid="stChatInput"] { visibility: hidden; display: none !important; }
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-
-    /* Hide text input but keep it functional for JS Bridge */
-    div[data-testid="stChatInput"] { 
-        height: 0px; 
-        overflow: hidden; 
-        opacity: 0; 
-        margin: 0; 
-        padding: 0;
-        pointer-events: none;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,11 +119,13 @@ with st.sidebar:
         st.session_state.speak_text = None
         st.rerun()
 
-# --- SUPREME NEURAL BRIDGE (JS-PYTHON PROXY) ---
+# --- THE HIDDEN NEURAL BRIDGE (NO INPUT/NO KEYBOARD) ---
 def neural_bridge():
     gender = v_identity.lower()
     payload = st.session_state.speak_text if st.session_state.speak_text else ""
     
+    # We use a hidden iFrame and window.parent.location replacement to send data back
+    # without any text field focus, preventing the mobile keyboard.
     js_code = f"""
         <script>
             var isActive = {json.dumps(st.session_state.active)};
@@ -139,55 +133,34 @@ def neural_bridge():
             var gender = "{gender}";
 
             function bridgeToPython(text) {{
-                // Robust selector for Streamlit text input
-                const textArea = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                if (textArea) {{
-                    textArea.value = text;
-                    const event = new Event('input', {{ bubbles: true }});
-                    textArea.dispatchEvent(event);
-                    const enterEvent = new KeyboardEvent('keydown', {{
-                        key: 'Enter', keyCode: 13, which: 13, bubbles: true
-                    }});
-                    textArea.dispatchEvent(enterEvent);
-                    console.log("Transcript sent to Python:", text);
-                }} else {{
-                    console.error("Critical: Neural Bridge failed to find target.");
-                }}
+                // NO TEXTBOX: Use Query Params to send data back to Python
+                const url = new URL(window.parent.location.href);
+                url.searchParams.set("transcript", text);
+                url.searchParams.set("ts", Date.now()); // Force refresh
+                window.parent.location.href = url.href;
             }}
 
             function runAuraCycle() {{
                 if (!isActive) return;
 
                 if (speakText) {{
-                    // PHASE: SPEAKING
                     window.speechSynthesis.cancel();
-                    
                     var attemptSpeak = function() {{
-                        var msg = new SpeechSynthesisUtterance(speakText);
                         var voices = window.speechSynthesis.getVoices();
-                        
-                        if (voices.length === 0) {{
-                            setTimeout(attemptSpeak, 200);
-                            return;
-                        }}
-
+                        if (voices.length === 0) {{ setTimeout(attemptSpeak, 200); return; }}
+                        var msg = new SpeechSynthesisUtterance(speakText);
                         var target = voices.find(v => {{
                             var n = v.name.toLowerCase();
-                            if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
-                            return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy') || n.includes('google uk english male');
+                            if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria');
+                            return n.includes('male') || n.includes('david') || n.includes('alex');
                         }});
-                        
                         msg.voice = target || voices[0];
                         msg.rate = 1.15;
-                        msg.onend = function() {{
-                            setTimeout(startListening, 300);
-                        }};
+                        msg.onend = function() {{ setTimeout(startListening, 300); }};
                         window.speechSynthesis.speak(msg);
                     }};
-                    
                     attemptSpeak();
                 }} else {{
-                    // PHASE: LISTENING (Initial)
                     startListening();
                 }}
             }}
@@ -195,10 +168,7 @@ def neural_bridge():
             function startListening() {{
                 if (!isActive) return;
                 var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!Recognition) {{
-                    console.error("Speech Recognition not supported in this browser.");
-                    return;
-                }}
+                if (!Recognition) return;
                 
                 var r = new Recognition();
                 r.lang = 'en-US';
@@ -211,22 +181,12 @@ def neural_bridge():
                 }};
 
                 r.onerror = function(e) {{
-                    console.log("Mic Error:", e.error);
-                    if (isActive) {{
-                        if (e.error === 'no-speech') {{
-                            setTimeout(startListening, 500); // Silent retry
-                        }} else if (e.error === 'not-allowed') {{
-                            alert("Microphone Blocked. Please click the lock icon in your address bar and allow the microphone.");
-                        }} else {{
-                            setTimeout(startListening, 1000);
-                        }}
-                    }}
+                    if (isActive) setTimeout(startListening, 1000);
                 }};
 
                 r.start();
             }}
 
-            // Start up
             if (window.speechSynthesis.onvoiceschanged !== undefined) {{
                 window.speechSynthesis.onvoiceschanged = runAuraCycle;
             }}
@@ -235,7 +195,7 @@ def neural_bridge():
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect Buttons
+# Connect
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
@@ -247,6 +207,7 @@ with col2:
         if st.button("🛑 DISCONNECT LINK"):
             st.session_state.active = False
             st.session_state.speak_text = None
+            st.query_params.clear()
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -255,7 +216,7 @@ orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
 orb_class = "active" if st.session_state.active else ""
-status_label = "AURA IS READY & LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
+status_label = "AURA IS LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
 
 if st.session_state.speak_text:
     orb_class = "speaking"
@@ -264,30 +225,36 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# The Proxy (Invisible chat input)
-user_query = st.chat_input("Listening...")
-
-if user_query and st.session_state.active:
-    # BRAIN PHASE
-    st.session_state.history.append({"role": "user", "text": user_query})
+# --- QUERY ENGINE (THE NO-KEYBOARD BRIDGE) ---
+params = st.query_params
+if "transcript" in params and st.session_state.active:
+    transcript = params["transcript"]
+    ts = params.get("ts", "")
     
-    client = Groq(api_key=api_key)
-    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa."}]
-    for turn in st.session_state.history[-8:]:
-        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-    
-    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-    answer = res.choices[0].message.content
-    
-    save_to_db(user_query, answer)
-    st.session_state.history.append({"role": "bot", "text": answer})
-    st.session_state.speak_text = answer
-    st.rerun()
+    # Only process if it's a new message
+    if ts != st.session_state.last_processed:
+        st.session_state.last_processed = ts
+        
+        # BRAIN PHASE
+        st.session_state.history.append({"role": "user", "text": transcript})
+        
+        client = Groq(api_key=api_key)
+        msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NEVER mention keyboards or text."}]
+        for turn in st.session_state.history[-8:]:
+            msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+        
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+        answer = res.choices[0].message.content
+        
+        save_to_db(transcript, answer)
+        st.session_state.history.append({"role": "bot", "text": answer})
+        st.session_state.speak_text = answer
+        # Clear query params for next turn
+        st.rerun()
 
 # Trigger Neural Bridge
 if st.session_state.active:
     neural_bridge()
-    # Note: we clear speak_text after rendering the bridge so it doesn't repeat
     st.session_state.speak_text = None
 
 # History
