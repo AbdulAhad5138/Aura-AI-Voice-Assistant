@@ -1,9 +1,6 @@
 groq
 python-dotenv
-Pillow
 streamlit
-pyperclip
-google-generativeai
-pyttsx3
 SpeechRecognition
 PyAudio
+Pillow
