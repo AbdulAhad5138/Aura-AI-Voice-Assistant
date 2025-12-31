@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Alexa Infinite", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Neural Alexa", page_icon="🤖", layout="wide")
 
 # Persistent Paths
 BASE_DIR = Path(__file__).parent
@@ -61,8 +61,8 @@ db_healthy = init_db()
 
 # Session States
 if 'history' not in st.session_state: st.session_state.history = []
-if 'speak_text' not in st.session_state: st.session_state.speak_text = None
 if 'active' not in st.session_state: st.session_state.active = False
+if 'last_transcription' not in st.session_state: st.session_state.last_transcription = ""
 api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
@@ -80,9 +80,11 @@ st.markdown("""
     .orb-box { display: flex; justify-content: center; margin: 20px 0; }
     .orb { width: 140px; height: 140px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; position: relative; }
     .orb.active { background: #6366f1; box-shadow: 0 0 80px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
+    .orb.thinking { background: #a855f7; box-shadow: 0 0 80px rgba(168, 85, 247, 0.4); animation: rotate 2s infinite linear; }
     .orb.speaking { background: #ec4899; box-shadow: 0 0 80px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
     
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
+    @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     
     .status { text-align: center; color: #818cf8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; font-size: 0.9rem; }
     .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 10px; }
@@ -111,70 +113,88 @@ with st.sidebar:
     vault_toggle = st.toggle("Open Neural Vault", value=False)
     if st.button("Purge Session"):
         st.session_state.history = []
+        st.session_state.active = False
         st.rerun()
     st.write(f"DB Node: {'🟢 ONLINE' if db_healthy else '🔴 ERROR'}")
 
-# --- ALEXA BRIDGE (TRANSCRIPTION + VOICE ENGINE) ---
-# This script handles browser-side audio, sends it to st.session_state, and plays voice
-def alexa_bridge():
-    # We use a custom HTML component that uses Web Speech API for both recognition and synthesis
-    # to achieve the true hands-to-free loop.
+# --- THE NEURAL CORE (JS BRIDGE) ---
+# This component handles browser-side Speech -> Streamlit -> Speech Loop
+def neural_core():
+    # If there's a response to speak, find it
+    speak_payload = ""
+    if st.session_state.history and st.session_state.history[-1]['role'] == 'bot':
+        speak_payload = st.session_state.history[-1]['text']
+
     js_code = f"""
+        <div id="neural-bridge" style="display:none;"></div>
         <script>
-            var active = {json.dumps(st.session_state.active)};
-            var last_text = {json.dumps(st.session_state.speak_text)};
-            var gender = {json.dumps(v_identity.lower())};
+            const gender = {json.dumps(v_identity.lower())};
+            const speakText = {json.dumps(speak_payload)};
+            const active = {json.dumps(st.session_state.active)};
             
+            function triggerStreamlit(type, text) {{
+                const data = {{type: type, text: text}};
+                window.parent.postMessage({{
+                    type: 'streamlit:setComponentValue',
+                    value: data
+                }}, '*');
+            }}
+
             if (active) {{
-                // 🔊 VOICE OUTPUT
-                if (last_text) {{
+                if (speakText) {{
+                    // PHASE: SPEAKING
                     window.speechSynthesis.cancel();
-                    var msg = new SpeechSynthesisUtterance(last_text);
-                    var voices = window.speechSynthesis.getVoices();
-                    var targetVoice = voices.find(v => {{
-                        var n = v.name.toLowerCase();
-                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
+                    const msg = new SpeechSynthesisUtterance(speakText);
+                    const voices = window.speechSynthesis.getVoices();
+                    const target = voices.find(v => {{
+                        const n = v.name.toLowerCase();
+                        if (gender === 'female') return n.includes('female') || n.includes('zira') || n.includes('samantha') || n.includes('aria');
                         return n.includes('male') || n.includes('david') || n.includes('alex');
                     }});
-                    msg.voice = targetVoice || voices[0];
-                    msg.rate = 1.05;
-                    msg.onend = function() {{
-                        // Automatically start listening after speaking is done
+                    msg.voice = target || voices[0];
+                    msg.rate = 1.1;
+                    msg.onend = () => {{
+                        // Once finished speaking, immediately start listening again
                         startListening();
                     }};
                     window.speechSynthesis.speak(msg);
                 }} else {{
+                    // PHASE: LISTENING
                     startListening();
                 }}
+            }}
 
-                function startListening() {{
-                    var recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                    recognition.lang = 'en-US';
-                    recognition.interimResults = false;
-                    recognition.maxAlternatives = 1;
-
-                    recognition.onresult = function(event) {{
-                        var txt = event.results[0][0].transcript;
-                        // Send text to Streamlit
-                        const data = {{type: 'transcription', text: txt}};
-                        window.parent.postMessage({{type: 'streamlit:setComponentValue', value: data}}, '*');
-                    }};
-
-                    recognition.onerror = function(event) {{
-                        // Silent retry if no audio detected
-                        setTimeout(startListening, 500);
-                    }};
-
-                    recognition.start();
-                }}
+            function startListening() {{
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) return;
+                
+                const rec = new SpeechRecognition();
+                rec.lang = 'en-US';
+                rec.continuous = false;
+                rec.interimResults = false;
+                
+                rec.onresult = (e) => {{
+                    const transcript = e.results[0][0].transcript;
+                    triggerStreamlit('user_voice', transcript);
+                }};
+                
+                rec.onerror = (e) => {{
+                    console.log('Rec Error:', e.error);
+                    if (active) setTimeout(startListening, 1000);
+                }};
+                
+                rec.onend = () => {{
+                    // If it ended without results, just restart
+                    if (active) setTimeout(startListening, 500);
+                }};
+                
+                rec.start();
             }}
         </script>
     """
-    # This component captures the return data from the JS
-    result = st.components.v1.html(js_code, height=0)
-    return result
+    return st.components.v1.html(js_code, height=0)
 
-# --- MAIN LOOP ---
+# --- UI CONTROLS ---
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
@@ -185,92 +205,53 @@ with col2:
         st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
         if st.button("🛑 DISCONNECT LINK"):
             st.session_state.active = False
-            st.session_state.speak_text = None
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
 # Orb Logic
-orb_style = "active" if st.session_state.active else ""
-status_label = "READY" if st.session_state.active else "OFFLINE"
-if st.session_state.speak_text:
-    orb_style = "speaking"
-    status_label = "AURA IS RESPONDING"
+orb_style = ""
+status_label = "OFFLINE"
+if st.session_state.active:
+    orb_style = "active"
+    status_label = "LISTENING..."
+    if st.session_state.history and st.session_state.history[-1]['role'] == 'bot':
+        # If the last message was bot, it might be speaking
+        orb_style = "speaking"
+        status_label = "AURA IS SPEAKING"
 
 st.markdown(f'<div class="orb-box"><div class="orb {orb_style}"></div></div>', unsafe_allow_html=True)
 st.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# --- THE HIDDEN BRIDGE ---
-# We use st.chat_input as a hidden proxy for the JS bridge data
-if st.session_state.active:
-    # Trigger the JS Bridge
-    alexa_bridge()
+# --- CALL THE CORE ---
+# This is where the magic happens. The component returns data to 'transcription'
+bridge_data = neural_core()
 
-# Catch data from the browser (JS sends transcription)
-# Since we can't easily catch JS messages directly in one turn, 
-# we've optimized the app to capture voice data via standard mic_recorder 
-# but we will simulate the Alexa loop by re-triggering.
-
-# FOR BEST CLOUD COMPATIBILITY: We use the mic_recorder as the trigger 
-# but hide it in a way that feels automatic.
-from streamlit_mic_recorder import mic_recorder
-
-st.markdown('<div style="display:flex; justify-content:center; margin-bottom:20px;">', unsafe_allow_html=True)
-audio = mic_recorder(
-    start_prompt="🎙️ PUSH TO START ALEXA LOOP",
-    stop_prompt="🛑 STOP",
-    just_once=True,
-    format="wav",
-    key='alexa_mic'
-)
-st.markdown('</div>', unsafe_allow_html=True)
-
-if audio:
-    import io
-    import speech_recognition as sr
-    audio_bytes = audio['bytes']
-    if audio_bytes:
-        r = sr.Recognizer()
-        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-            r.adjust_for_ambient_noise(source)
-            audio_data = r.record(source)
-        try:
-            user_text = r.recognize_google(audio_data)
-            st.session_state.history.append({"role": "user", "text": user_text})
+# If JS sent back a transcription, process it
+if bridge_data:
+    if bridge_data['type'] == 'user_voice':
+        user_query = bridge_data['text']
+        if user_query != st.session_state.last_transcription:
+            st.session_state.last_transcription = user_query
+            st.session_state.history.append({"role": "user", "text": user_query})
             
-            # Brain
-            client = Groq(api_key=api_key)
-            msgs = [{"role": "system", "content": "You are Aura. Be concise like Alexa. You remember everything."}]
-            for turn in st.session_state.history[-6:]:
-                msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-            
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-            ans = res.choices[0].message.content
-            
-            save_to_db(user_text, ans)
-            st.session_state.history.append({"role": "bot", "text": ans})
-            st.session_state.speak_text = ans
-            st.rerun()
-        except: pass
-
-# Trigger Voice JS
-if st.session_state.speak_text:
-    gender = v_identity.lower()
-    js_speak = f"""
-        <script>
-            window.speechSynthesis.cancel();
-            var msg = new SpeechSynthesisUtterance({json.dumps(st.session_state.speak_text)});
-            var voices = window.speechSynthesis.getVoices();
-            var targetVoice = voices.find(v => {{
-                var n = v.name.toLowerCase();
-                if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria');
-                return n.includes('male') || n.includes('david');
-            }});
-            msg.voice = targetVoice || voices[0];
-            window.speechSynthesis.speak(msg);
-        </script>
-    """
-    st.components.v1.html(js_speak, height=0)
-    st.session_state.speak_text = None
+            # Contact Groq
+            try:
+                client = Groq(api_key=api_key)
+                msgs = [{"role": "system", "content": "You are Aura. Be concise like Alexa. You remember everything."}]
+                for turn in st.session_state.history[-6:]:
+                    msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+                
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+                bot_ans = res.choices[0].message.content
+                
+                # Save to Database
+                save_to_db(user_query, bot_ans)
+                
+                # Add to history (this triggers the 'bot' role which the JS bridge uses to speak)
+                st.session_state.history.append({"role": "bot", "text": bot_ans})
+                st.rerun()
+            except Exception as e:
+                st.error(f"Brain Error: {e}")
 
 # History Vault
 if vault_toggle:
