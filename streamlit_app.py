@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Pure Voice Alexa", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Supreme Alexa", page_icon="🤖", layout="wide")
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -96,18 +96,19 @@ st.markdown("""
     #MainMenu, footer {visibility: hidden;}
     .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 
-    /* ABSOLUTELY HIDE TEXT CHAT INPUT */
+    /* Hide text input but keep it functional for JS Bridge */
     div[data-testid="stChatInput"] { 
-        display: none !important; 
-        visibility: hidden !important; 
-        pointer-events: none !important;
-        position: fixed;
-        bottom: -500px;
+        height: 0px; 
+        overflow: hidden; 
+        opacity: 0; 
+        margin: 0; 
+        padding: 0;
+        pointer-events: none;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Header
+# Logo
 if LOGO_PATH.exists():
     with open(LOGO_PATH, "rb") as f:
         logo_b64 = base64.b64encode(f.read()).decode()
@@ -126,8 +127,8 @@ with st.sidebar:
         st.session_state.speak_text = None
         st.rerun()
 
-# --- THE PURE VOICE BRIDGE (NO TEXT INPUTS VISIBLE) ---
-def voice_bridge():
+# --- SUPREME NEURAL BRIDGE (JS-PYTHON PROXY) ---
+def neural_bridge():
     gender = v_identity.lower()
     payload = st.session_state.speak_text if st.session_state.speak_text else ""
     
@@ -137,25 +138,28 @@ def voice_bridge():
             var speakText = {json.dumps(payload)};
             var gender = "{gender}";
 
-            // Bridge to send transcript back via hidden proxy
-            function sendTranscript(text) {{
-                const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-                if (input) {{
-                    input.value = text;
+            function bridgeToPython(text) {{
+                // Robust selector for Streamlit text input
+                const textArea = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                if (textArea) {{
+                    textArea.value = text;
                     const event = new Event('input', {{ bubbles: true }});
-                    input.dispatchEvent(event);
+                    textArea.dispatchEvent(event);
                     const enterEvent = new KeyboardEvent('keydown', {{
                         key: 'Enter', keyCode: 13, which: 13, bubbles: true
                     }});
-                    input.dispatchEvent(enterEvent);
+                    textArea.dispatchEvent(enterEvent);
+                    console.log("Transcript sent to Python:", text);
+                }} else {{
+                    console.error("Critical: Neural Bridge failed to find target.");
                 }}
             }}
 
-            function startAuraLoop() {{
+            function runAuraCycle() {{
                 if (!isActive) return;
 
                 if (speakText) {{
-                    // TALK
+                    // PHASE: SPEAKING
                     window.speechSynthesis.cancel();
                     var msg = new SpeechSynthesisUtterance(speakText);
                     var voices = window.speechSynthesis.getVoices();
@@ -165,39 +169,45 @@ def voice_bridge():
                         return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('guy');
                     }});
                     msg.voice = target || voices[0];
-                    msg.rate = 1.1;
+                    msg.rate = 1.15;
                     msg.onend = function() {{
-                        // Alexa Loop: Listen immediately after speaking
-                        setTimeout(listenNow, 300);
+                        // Automatically start listening after speaking finishes
+                        setTimeout(startListening, 300);
                     }};
                     window.speechSynthesis.speak(msg);
                 }} else {{
-                    // LISTEN (Initial)
-                    listenNow();
+                    // PHASE: LISTENING (Initial)
+                    startListening();
                 }}
             }}
 
-            function listenNow() {{
+            function startListening() {{
                 if (!isActive) return;
-                var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) return;
-
-                var r = new SpeechRecognition();
+                var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!Recognition) {{
+                    console.error("Speech Recognition not supported in this browser.");
+                    return;
+                }}
+                
+                var r = new Recognition();
                 r.lang = 'en-US';
                 r.continuous = false;
                 r.interimResults = false;
 
                 r.onresult = function(e) {{
                     var transcript = e.results[0][0].transcript;
-                    sendTranscript(transcript);
+                    bridgeToPython(transcript);
                 }};
 
                 r.onerror = function(e) {{
+                    console.log("Mic Error:", e.error);
                     if (isActive) {{
-                        if (e.error === 'not-allowed') {{
-                             console.error("Mic Permission Denied.");
+                        if (e.error === 'no-speech') {{
+                            setTimeout(startListening, 500); // Silent retry
+                        }} else if (e.error === 'not-allowed') {{
+                            alert("Microphone Blocked. Please click the lock icon in your address bar and allow the microphone.");
                         }} else {{
-                             setTimeout(listenNow, 800);
+                            setTimeout(startListening, 1000);
                         }}
                     }}
                 }};
@@ -205,16 +215,16 @@ def voice_bridge():
                 r.start();
             }}
 
-            // Start logic
+            // Start up
             if (window.speechSynthesis.onvoiceschanged !== undefined) {{
-                window.speechSynthesis.onvoiceschanged = startAuraLoop;
+                window.speechSynthesis.onvoiceschanged = runAuraCycle;
             }}
-            setTimeout(startAuraLoop, 800);
+            setTimeout(runAuraCycle, 500);
         </script>
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect Button
+# Connect Buttons
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
@@ -229,7 +239,7 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Status & Orb
+# Status
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
@@ -243,33 +253,33 @@ if st.session_state.speak_text:
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# THE HIDDEN BRIDGE (PROXY)
-# This is fully hidden by the CSS above but receives data from the voice bridge
-transcript_input = st.chat_input("Speak...")
+# The Proxy (Invisible chat input)
+user_query = st.chat_input("Listening...")
 
-if transcript_input and st.session_state.active:
-    # Brain Phase
-    st.session_state.history.append({"role": "user", "text": transcript_input})
+if user_query and st.session_state.active:
+    # BRAIN PHASE
+    st.session_state.history.append({"role": "user", "text": user_query})
     
     client = Groq(api_key=api_key)
-    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NEVER mention being a chatbot."}]
+    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa."}]
     for turn in st.session_state.history[-8:]:
         msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
     
     res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
     answer = res.choices[0].message.content
     
-    save_to_db(transcript_input, answer)
+    save_to_db(user_query, answer)
     st.session_state.history.append({"role": "bot", "text": answer})
     st.session_state.speak_text = answer
     st.rerun()
 
 # Trigger Neural Bridge
 if st.session_state.active:
-    voice_bridge()
+    neural_bridge()
+    # Note: we clear speak_text after rendering the bridge so it doesn't repeat
     st.session_state.speak_text = None
 
-# --- HISTORY DISPLAY (Newest First) ---
+# History
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
@@ -277,7 +287,7 @@ if st.session_state.history:
         color = "#6366f1" if m['role'] == 'user' else "#ec4899"
         role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
         st.markdown(f"""
-            <div class="chat-card" style="border-left: 4px solid {color};">
+            <div class="chat-card" style="border-left: 4px solid {color}; shadow: 0 4px 12px rgba(0,0,0,0.5);">
                 <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
                 <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
             </div>
