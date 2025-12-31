@@ -64,7 +64,8 @@ if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
 
-api_key = st.sidebar.text_input("GROQ API KEY", value=os.getenv("GROQ_API_KEY", ""), type="password")
+# Hide GROQ API Key from UI (Load from .env or Secrets)
+api_key = os.getenv("GROQ_API_KEY", "")
 
 # --- LUXURY STYLING ---
 st.markdown("""
@@ -79,7 +80,7 @@ st.markdown("""
     .title { font-family: 'Space Grotesk', sans-serif; font-size: 4rem; text-align: center; background: linear-gradient(180deg, #fff 0%, #475569 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; letter-spacing: -4px; }
     
     .orb-box { display: flex; justify-content: center; margin: 20px 0; }
-    .orb { width: 150px; height: 150px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; }
+    .orb { width: 150px; height: 150px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; position: relative; }
     .orb.active { background: #6366f1; box-shadow: 0 0 100px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
     .orb.thinking { background: #a855f7; box-shadow: 0 0 100px rgba(168, 85, 247, 0.4); animation: pulse 1s infinite alternate; }
     .orb.speaking { background: #ec4899; box-shadow: 0 0 100px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
@@ -87,16 +88,19 @@ st.markdown("""
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
     
     .status { text-align: center; color: #818cf8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; font-size: 1rem; }
-    .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 10px; }
+    .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 15px; }
     
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
     .stop-btn button { background: #000 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
     #MainMenu, footer {visibility: hidden;}
+    
+    /* Ensure chat history looks premium */
+    .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Helper for Logo
+# Logo Display
 if LOGO_PATH.exists():
     with open(LOGO_PATH, "rb") as f:
         logo_b64 = base64.b64encode(f.read()).decode()
@@ -115,22 +119,33 @@ with st.sidebar:
         st.session_state.speak_text = None
         st.rerun()
 
-# --- BROWSER VOICE ENGINE ---
+# --- BI-DIRECTIONAL VOICE ENGINE ---
 def speak_out(text):
     gender = v_identity.lower()
     js_code = f"""
         <script>
-            window.speechSynthesis.cancel();
-            var msg = new SpeechSynthesisUtterance({json.dumps(text)});
-            var voices = window.speechSynthesis.getVoices();
-            var target = voices.find(v => {{
-                var n = v.name.toLowerCase();
-                if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha');
-                return n.includes('male') || n.includes('david') || n.includes('alex');
-            }});
-            msg.voice = target || voices[0];
-            msg.rate = 1.05;
-            window.speechSynthesis.speak(msg);
+            function speak() {{
+                window.speechSynthesis.cancel();
+                var msg = new SpeechSynthesisUtterance({json.dumps(text)});
+                var voices = window.speechSynthesis.getVoices();
+                
+                // Optimized voice finding for local systems
+                var target = voices.find(v => {{
+                    var n = v.name.toLowerCase();
+                    if ('{gender}' === 'female') return n.includes('female') || n.includes('zira') || n.includes('aria') || n.includes('samantha') || n.includes('google us english');
+                    return n.includes('male') || n.includes('david') || n.includes('alex') || n.includes('google uk english male');
+                }});
+                
+                msg.voice = target || voices[0];
+                msg.rate = 1.1; // Balanced speed
+                window.speechSynthesis.speak(msg);
+            }}
+
+            if (window.speechSynthesis.getVoices().length > 0) {{
+                speak();
+            }} else {{
+                window.speechSynthesis.onvoiceschanged = speak;
+            }}
         </script>
     """
     st.components.v1.html(js_code, height=0)
@@ -150,84 +165,100 @@ with col2:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Orb display
+# Orb & Status (Placeholders for real-time updates)
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
 
-orb_class = "active" if st.session_state.active else ""
-status_txt = "LISTENING..." if st.session_state.active else "OFFLINE"
+current_orb = "active" if st.session_state.active else ""
+current_status = "AURA IS LISTENING..." if st.session_state.active else "SYSTEM OFFLINE"
 
 if st.session_state.speak_text:
-    orb_class = "speaking"
-    status_txt = "AURA IS SPEAKING"
+    current_orb = "speaking"
+    current_status = "AURA IS RESPONDING"
 
-orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
-status_placeholder.markdown(f'<div class="status">{status_txt}</div>', unsafe_allow_html=True)
+orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {current_orb}"></div></div>', unsafe_allow_html=True)
+status_placeholder.markdown(f'<div class="status">{current_status}</div>', unsafe_allow_html=True)
 
-# --- THE SUPREME LOOP ---
+# --- THE CONTINUOUS NEURAL LOOP ---
 if st.session_state.active:
     import speech_recognition as sr
     
     # 1. Output Voice if needed
     if st.session_state.speak_text:
         speak_out(st.session_state.speak_text)
-        # Give the browser a moment to start speaking before listening again
-        # This prevents Aura from hearing herself
-        time.sleep(len(st.session_state.speak_text) / 15 + 1.5)
+        # Dynamic wait based on response length for better flow
+        wait_time = max(1.5, len(st.session_state.speak_text) / 16)
+        time.sleep(wait_time)
         st.session_state.speak_text = None
         st.rerun()
 
     # 2. Listen Phase
-    status_placeholder.markdown(f'<div class="status" style="color:#6366f1;">👂 LISTENING...</div>', unsafe_allow_html=True)
-    orb_placeholder.markdown(f'<div class="orb-box"><div class="orb active"></div></div>', unsafe_allow_html=True)
-    
     r = sr.Recognizer()
-    # SUPREME ALEXA SETTINGS
-    r.energy_threshold = 300
+    # Optimized Alexa thresholds
+    r.energy_threshold = 350
     r.dynamic_energy_threshold = True
-    r.pause_threshold = 2.0 # Wait for 2 seconds of silence like Alexa
+    r.pause_threshold = 1.6 # BALANCED SPEED: 1.6s silence detection
     
     try:
         with sr.Microphone() as source:
-            r.adjust_for_ambient_noise(source, duration=0.6)
-            audio = r.listen(source, timeout=10, phrase_time_limit=18)
+            r.adjust_for_ambient_noise(source, duration=0.4) # Fast noise adjustment
+            status_placeholder.markdown(f'<div class="status" style="color:#6366f1;">👂 LISTENING...</div>', unsafe_allow_html=True)
+            audio = r.listen(source, timeout=8, phrase_time_limit=15)
         
         status_placeholder.markdown(f'<div class="status" style="color:#a855f7;">🧠 THINKING...</div>', unsafe_allow_html=True)
         orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
         
         query = r.recognize_google(audio)
-        st.session_state.history.append({"role": "user", "text": query})
-        
-        # Groq Brain
-        client = Groq(api_key=api_key)
-        msgs = [{"role": "system", "content": "You are Aura. Be concise like Alexa. You remember history."}]
-        for turn in st.session_state.history[-6:]:
-            msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-        
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-        ans = res.choices[0].message.content
-        
-        save_to_db(query, ans)
-        st.session_state.history.append({"role": "bot", "text": ans})
-        st.session_state.speak_text = ans
-        st.rerun()
+        if query:
+            st.session_state.history.append({"role": "user", "text": query})
+            
+            # Groq Brain (Hidden Key)
+            if not api_key:
+                st.error("GROQ_API_KEY missing in .env")
+                st.stop()
+                
+            client = Groq(api_key=api_key)
+            msgs = [{"role": "system", "content": "You are Aura. Be concise, warm, and natural like Alexa. You remember history."}]
+            # Keep only last 10 messages for speed
+            for turn in st.session_state.history[-10:]:
+                msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+            
+            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+            answer = res.choices[0].message.content
+            
+            save_to_db(query, answer)
+            st.session_state.history.append({"role": "bot", "text": answer})
+            st.session_state.speak_text = answer
+            st.rerun()
 
     except Exception:
-        # Silent retry if no audio
-        time.sleep(0.1)
+        # Retry loop if no voice detected
+        time.sleep(0.05)
         st.rerun()
 
-# Vault display
+# --- HISTORY DISPLAY (PREMIUM UI) ---
 if vault_toggle:
-    st.divider(); st.markdown("### 🏛️ NEURAL VAULT")
+    st.divider()
+    st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT (LONG-TERM MEMORY)</div>', unsafe_allow_html=True)
     vault = get_vault_data()
-    for entry in vault:
-        with st.expander(f"📍 {entry[0]} | {entry[1][:25]}..."):
-            st.write(f"**Human:** {entry[1]} "); st.write(f"**Aura:** {entry[2]}")
+    if vault:
+        for entry in vault:
+            with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
+                st.write(f"**Human:** {entry[1]}")
+                st.write(f"**Aura:** {entry[2]}")
+    else:
+        st.info("Vault is currently empty.")
 
 if st.session_state.history:
-    st.divider(); st.markdown("### 🧬 ACTIVE SYNAPSES")
-    for m in reversed(st.session_state.history[-4:]):
+    st.divider()
+    st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES (CURRENT SESSION)</div>', unsafe_allow_html=True)
+    # Display in natural order but only last 6 for clarity
+    for m in st.session_state.history[-6:]:
         color = "#6366f1" if m['role'] == 'user' else "#ec4899"
-        role = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
-        st.markdown(f'<div class="chat-card"><b style="color:{color};">{role}</b><br>{m["text"]}</div>', unsafe_allow_html=True)
+        role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
+        st.markdown(f"""
+            <div class="chat-card" style="border-left: 4px solid {color}; shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
+                <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
+            </div>
+        """, unsafe_allow_html=True)
