@@ -2,6 +2,3 @@ groq
 python-dotenv
 streamlit
 Pillow
-SpeechRecognition
-PyAudio
-streamlit-mic-recorder
