@@ -13,9 +13,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Master Control", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AURA AI | Titan Voice", page_icon="🤖", layout="wide")
 
-# Paths & Folders
+# Paths
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "aura_data"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
@@ -59,11 +59,11 @@ def get_vault_data():
 
 init_db()
 
-# Session State Persistence
+# Session States
 if 'history' not in st.session_state: st.session_state.history = []
 if 'active' not in st.session_state: st.session_state.active = False
 if 'speak_text' not in st.session_state: st.session_state.speak_text = None
-if 'user_input' not in st.session_state: st.session_state.user_input = None
+if 'thinking' not in st.session_state: st.session_state.thinking = False
 
 # API Key
 api_key = os.getenv("GROQ_API_KEY", "")
@@ -83,7 +83,8 @@ st.markdown("""
     .orb-box { display: flex; justify-content: center; margin: 20px 0; }
     .orb { width: 150px; height: 150px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; position: relative; }
     .orb.active { background: #6366f1; box-shadow: 0 0 100px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
-    .orb.thinking { background: #ec4899; box-shadow: 0 0 100px rgba(236, 72, 153, 0.4); animation: pulse 0.5s infinite alternate; }
+    .orb.thinking { background: #a855f7; box-shadow: 0 0 100px rgba(168, 85, 247, 0.4); animation: pulse 1s infinite alternate; }
+    .orb.speaking { background: #ec4899; box-shadow: 0 0 100px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
     
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
     
@@ -93,9 +94,16 @@ st.markdown("""
     .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
     .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
     
-    #MainMenu, footer, div[data-testid="stChatInput"] { visibility: hidden; display: none !important; }
-    
-    .neural-transcript { text-align: center; color: #94a3b8; font-style: italic; margin-top: -10px; margin-bottom: 20px; min-height: 24px; font-size: 0.9rem; }
+    #MainMenu, footer {visibility: hidden;}
+    .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+
+    /* TITAN SHIELD: Hide chat input but keep it for data transfer */
+    div[data-testid="stChatInput"] { 
+        position: fixed; 
+        bottom: -500px; 
+        opacity: 0; 
+        pointer-events: none;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,11 +124,11 @@ with st.sidebar:
         st.session_state.history = []
         st.session_state.active = False
         st.session_state.speak_text = None
-        st.session_state.user_input = None
+        st.session_state.thinking = False
         st.rerun()
 
-# --- THE MASTER NEURAL BRIDGE (DIRECT COMMUNICATION) ---
-def master_neural_bridge():
+# --- THE TITAN BRIDGE (UNSTOPPABLE CONNECTION) ---
+def titan_bridge():
     gender = v_identity.lower()
     payload = st.session_state.speak_text if st.session_state.speak_text else ""
     
@@ -131,30 +139,42 @@ def master_neural_bridge():
             var gender = "{gender}";
 
             function bridgeToPython(text) {{
-                // MASTER GATE: Send transcript using a dedicated Streamlit component value update
-                // This is the most stable way to talk back to Streamlit
-                const url = new URL(window.parent.location.href);
-                url.searchParams.set("aura_sync", text);
-                url.searchParams.set("aura_token", Date.now());
-                window.parent.location.href = url.href;
+                const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                const submit = window.parent.document.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                if (input) {{
+                    input.value = text;
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    setTimeout(() => {{
+                        if (submit) submit.click();
+                        else {{
+                           const enter = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }});
+                           input.dispatchEvent(enter);
+                        }}
+                    }}, 100);
+                }}
             }}
 
-            function initAura() {{
+            function runCycle() {{
                 if (!isActive) return;
 
                 if (speakText) {{
                     window.speechSynthesis.cancel();
-                    var msg = new SpeechSynthesisUtterance(speakText);
-                    var voices = window.speechSynthesis.getVoices();
-                    var target = voices.find(v => {{
-                        var n = v.name.toLowerCase();
-                        if (gender === 'female') return n.includes('female') || n.includes('aria') || n.includes('samantha');
-                        return n.includes('male') || n.includes('david') || n.includes('alex');
-                    }});
-                    msg.voice = target || voices[0];
-                    msg.rate = 1.15;
-                    msg.onend = function() {{ setTimeout(startListening, 300); }};
-                    window.speechSynthesis.speak(msg);
+                    var attempt = function() {{
+                        var voices = window.speechSynthesis.getVoices();
+                        if (voices.length === 0) {{ setTimeout(attempt, 200); return; }}
+                        var msg = new SpeechSynthesisUtterance(speakText);
+                        var target = voices.find(v => {{
+                            var n = v.name.toLowerCase();
+                            if (gender === 'female') return n.includes('female') || n.includes('aria') || n.includes('samantha');
+                            return n.includes('male') || n.includes('david') || n.includes('alex');
+                        }});
+                        msg.voice = target || voices[0];
+                        msg.rate = 1.15;
+                        msg.onend = function() {{ setTimeout(startListening, 300); }};
+                        window.speechSynthesis.speak(msg);
+                    }};
+                    attempt();
                 }} else {{
                     startListening();
                 }}
@@ -167,23 +187,23 @@ def master_neural_bridge():
                 
                 var r = new Recognition();
                 r.lang = 'en-US';
-                r.continuous = false;
                 r.onresult = function(e) {{
-                    var transcript = e.results[0][0].transcript;
-                    bridgeToPython(transcript);
+                    var t = e.results[0][0].transcript;
+                    bridgeToPython(t);
                 }};
-                r.onerror = function(e) {{
-                    if (isActive) setTimeout(startListening, 800);
-                }};
+                r.onerror = function() {{ if (isActive) setTimeout(startListening, 1000); }};
                 r.start();
             }}
 
-            setTimeout(initAura, 800);
+            if (window.speechSynthesis.onvoiceschanged !== undefined) {{
+                window.speechSynthesis.onvoiceschanged = runCycle;
+            }}
+            setTimeout(runCycle, 600);
         </script>
     """
     st.components.v1.html(js_code, height=0)
 
-# Connect Buttons
+# Connect
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if not st.session_state.active:
@@ -195,62 +215,58 @@ with col2:
         if st.button("🛑 DISCONNECT LINK"):
             st.session_state.active = False
             st.session_state.speak_text = None
-            st.query_params.clear()
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Status & Feedback
+# Status
 orb_placeholder = st.empty()
 status_placeholder = st.empty()
-transcript_placeholder = st.empty()
 
 orb_class = "active" if st.session_state.active else ""
 status_label = "AURA IS READY & LISTENING" if st.session_state.active else "SYSTEM OFFLINE"
 
-if st.session_state.user_input:
+if st.session_state.thinking:
     orb_class = "thinking"
     status_label = "AURA IS THINKING"
+elif st.session_state.speak_text:
+    orb_class = "speaking"
+    status_label = "AURA IS RESPONDING"
 
 orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
 status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
 
-# --- THE MASTER SYNC ENGINE (DATA PROCESSING) ---
-sync_data = st.query_params.get("aura_sync", None)
-sync_token = st.query_params.get("aura_token", None)
+# The Titan Portal (Data Gateway)
+user_input = st.chat_input("Neural Link Active...")
 
-if sync_data and st.session_state.active:
-    if sync_token != st.session_state.get('last_token'):
-        st.session_state.last_token = sync_token
-        st.session_state.user_input = sync_data
-        
-        # Immediate visual feedback
-        transcript_placeholder.markdown(f'<div class="neural-transcript">Heard: "{sync_data}"</div>', unsafe_allow_html=True)
-        
-        # Brain Phase
-        st.session_state.history.append({"role": "user", "text": sync_data})
-        client = Groq(api_key=api_key)
-        msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NO text/keyboard talk."}]
-        for turn in st.session_state.history[-8:]:
-            msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
-        
-        try:
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-            answer = res.choices[0].message.content
-            save_to_db(sync_data, answer)
-            st.session_state.history.append({"role": "bot", "text": answer})
-            st.session_state.speak_text = answer
-        except:
-            st.session_state.speak_text = "Neural system failure. Retrying link."
-        
-        st.session_state.user_input = None
-        st.rerun()
+if user_input and st.session_state.active:
+    st.session_state.thinking = True
+    orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
+    status_placeholder.markdown(f'<div class="status">AURA IS THINKING</div>', unsafe_allow_html=True)
+    
+    st.session_state.history.append({"role": "user", "text": user_input})
+    client = Groq(api_key=api_key)
+    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NO text/keyboard talk."}]
+    for turn in st.session_state.history[-8:]:
+        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
+    
+    try:
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
+        answer = res.choices[0].message.content
+        save_to_db(user_input, answer)
+        st.session_state.history.append({"role": "bot", "text": answer})
+        st.session_state.speak_text = answer
+    except:
+        st.session_state.speak_text = "I encountered a neural drift. Please try again."
+    
+    st.session_state.thinking = False
+    st.rerun()
 
 # Trigger Neural Bridge
 if st.session_state.active:
-    master_neural_bridge()
+    titan_bridge()
     st.session_state.speak_text = None
 
-# History (Newest First)
+# History
 if st.session_state.history:
     st.divider()
     st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
