@@ -8,283 +8,558 @@ import base64
 from pathlib import Path
 from groq import Groq
 from dotenv import load_dotenv
+from duckduckgo_search import DDGS
+
+# --- CONFIGURATION (BEST PERFORMANCE) ---
+ST_PAGE_TITLE = "AURA | Hyper-Intelligent Voice"
+ST_PAGE_ICON = "⚡"
+GROQ_MODEL = "llama-3.3-70b-versatile" # Smartest fast model
 
 # Load Environment
 load_dotenv()
 
 # --- INITIALIZATION ---
-st.set_page_config(page_title="AURA AI | Titan Voice", page_icon="🤖", layout="wide")
+st.set_page_config(page_title=ST_PAGE_TITLE, page_icon=ST_PAGE_ICON, layout="wide")
 
 # Paths
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "aura_data"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
-DB_PATH = DATA_DIR / "aura_vault.db"
+DB_PATH = DATA_DIR / "aura_memory.db"
 LOGO_PATH = BASE_DIR / "assets" / "logo.png"
 
+# --- DATABASE & MEMORY (Robust) ---
 def init_db():
+    """Initialize SQLite database with error handling for read-only environments."""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS conversation_vault
+        c.execute('''CREATE TABLE IF NOT EXISTS memory_vault
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                       timestamp TEXT, 
                       user_query TEXT, 
-                      bot_response TEXT)''')
+                      bot_response TEXT,
+                      meta_info TEXT)''')
         conn.commit()
         conn.close()
         return True
-    except: return False
+    except Exception as e:
+        # st.warning(f"⚠️ Memory Vault Error (Running in Stateless Mode): {e}")
+        return False
 
-def save_to_db(query, response):
+def save_interaction(query, response, meta=""):
     try:
+        if not DB_PATH.parent.exists(): return
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO conversation_vault (timestamp, user_query, bot_response) VALUES (?, ?, ?)",
-                  (ts, query, response))
+        c.execute("INSERT INTO memory_vault (timestamp, user_query, bot_response, meta_info) VALUES (?, ?, ?, ?)",
+                  (ts, query, response, meta))
         conn.commit()
         conn.close()
     except: pass
 
-def get_vault_data():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT timestamp, user_query, bot_response FROM conversation_vault ORDER BY id DESC LIMIT 50")
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    except: return []
-
 init_db()
 
-# Session States
+# --- SESSION STATE ---
 if 'history' not in st.session_state: st.session_state.history = []
-if 'active' not in st.session_state: st.session_state.active = False
-if 'speak_text' not in st.session_state: st.session_state.speak_text = None
-if 'thinking' not in st.session_state: st.session_state.thinking = False
+if 'voice_active' not in st.session_state: st.session_state.voice_active = False # Main toggle
+if 'audio_queue' not in st.session_state: st.session_state.audio_queue = None
+if 'processing_state' not in st.session_state: st.session_state.processing_state = "idle" 
 
-# API Key
-api_key = os.getenv("GROQ_API_KEY", "")
+# API Key Check
+api_key = os.getenv("GROQ_API_KEY")
+if not api_key:
+    st.error("🚨 CRITICAL: GROQ_API_KEY not found in .env file.")
+    st.stop()
 
-# --- LUXURY STYLING ---
+# --- TOOLS (WEB SEARCH) ---
+def search_web(query):
+    """Deep web search using DuckDuckGo."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+            if results:
+                summary = "\n".join([f"- {r['title']}: {r['body']} ({r['href']})" for r in results])
+                return summary
+            return "No relevant search results found."
+    except Exception as e:
+        return f"Search error: {e}"
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the internet for real-time information, news, stocks, or facts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query keywords",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    }
+]
+
+# --- LUXURY UI DESIGN ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Space+Grotesk:wght@600&display=swap');
-    .stApp { background: #020205; color: #f8fafc; font-family: 'Outfit', sans-serif; }
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;700&family=Syncopate:wght@400;700&display=swap');
     
-    .logo-container { text-align: center; padding-top: 10px; }
-    .logo-img { width: 110px; margin: 0 auto; display: block; animation: float 4s infinite ease-in-out; }
-    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    /* GLOBAL THEME */
+    .stApp { background-color: #050505; color: #e2e8f0; font-family: 'Outfit', sans-serif; }
+    
+    /* LOGO & TITLE */
+    .hero-container { text-align: center; margin-bottom: 2rem; }
+    .neon-text { 
+        font-family: 'Syncopate', sans-serif; 
+        font-size: 3rem; 
+        font-weight: 700;
+        background: linear-gradient(90deg, #4f46e5, #ec4899, #4f46e5); 
+        background-size: 200% auto;
+        -webkit-background-clip: text; 
+        -webkit-text-fill-color: transparent; 
+        animation: shine 4s linear infinite;
+        letter-spacing: -2px;
+    }
+    @keyframes shine { to { background-position: 200% center; } }
 
-    .title { font-family: 'Space Grotesk', sans-serif; font-size: 4rem; text-align: center; background: linear-gradient(180deg, #fff 0%, #475569 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; letter-spacing: -4px; }
+    /* ORB ANIMATIONS */
+    .orb-stage { display: flex; justify-content: center; height: 180px; align-items: center; position: relative; }
+    .core-orb {
+        width: 100px; height: 100px; border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #6366f1, #000);
+        box-shadow: 0 0 40px rgba(99, 102, 241, 0.4);
+        position: relative; z-index: 2;
+        transition: all 0.5s ease;
+    }
+    .ring {
+        position: absolute; border-radius: 50%; border: 1px solid rgba(255,255,255,0.1);
+        top: 50%; left: 50%; transform: translate(-50%, -50%);
+        animation: spin 10s linear infinite;
+    }
+    .r1 { width: 140px; height: 140px; border-top-color: #ec4899; animation-duration: 4s; }
+    .r2 { width: 180px; height: 180px; border-bottom-color: #8b5cf6; animation-direction: reverse; animation-duration: 7s; }
     
-    .orb-box { display: flex; justify-content: center; margin: 20px 0; }
-    .orb { width: 150px; height: 150px; border-radius: 50%; background: #050505; border: 1px solid #111; transition: 0.5s; position: relative; }
-    .orb.active { background: #6366f1; box-shadow: 0 0 100px rgba(99, 102, 241, 0.4); animation: pulse 1.5s infinite alternate; }
-    .orb.thinking { background: #a855f7; box-shadow: 0 0 100px rgba(168, 85, 247, 0.4); animation: pulse 1s infinite alternate; }
-    .orb.speaking { background: #ec4899; box-shadow: 0 0 100px rgba(236, 72, 153, 0.5); transform: scale(1.1); }
-    
-    @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
-    
-    .status { text-align: center; color: #818cf8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; font-size: 1rem; }
-    .chat-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 15px; border-left: 4px solid #333; }
-    
-    .stButton > button { border-radius: 20px; padding: 15px; font-weight: 700; background: #6366f1 !important; color: white !important; width: 100%; transition: 0.3s; }
-    .stop-btn button { background: #111 !important; color: #ef4444 !important; border: 1px solid #ef4444 !important; }
-    
-    #MainMenu, footer {visibility: hidden;}
-    .synapse-header { color: #818cf8; border-bottom: 1px solid #1a1a2e; padding-bottom: 10px; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    @keyframes spin { 100% { transform: translate(-50%, -50%) rotate(360deg); } }
 
-    /* TITAN SHIELD: Hide chat input but keep it for data transfer */
+    /* STATES */
+    .status-badge { 
+        text-align: center; margin-top: 1rem; 
+        font-family: 'Syncopate'; font-size: 0.8rem; letter-spacing: 2px;
+        color: #94a3b8;
+    }
+    
+    /* Thinking State */
+    .thinking .core-orb { animation: breathe 1.5s infinite alternate; background: radial-gradient(circle at 30% 30%, #ec4899, #000); box-shadow: 0 0 60px rgba(236, 72, 153, 0.6); }
+    @keyframes breathe { from { transform: scale(0.95); } to { transform: scale(1.1); } }
+    
+    /* Speaking State */
+    .speaking .core-orb { animation: vibe 0.2s infinite; background: radial-gradient(circle at 30% 30%, #10b981, #000); box-shadow: 0 0 60px rgba(16, 185, 129, 0.6); }
+    @keyframes vibe { 0% { transform: translate(1px, 1px); } 100% { transform: translate(-1px, -1px); } }
+
+    /* CHAT CARDS */
+    .chat-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+    .chat-row.user { flex-direction: row-reverse; }
+    .bubble { 
+        padding: 1rem 1.5rem; border-radius: 20px; max-width: 80%;
+        background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05);
+        backdrop-filter: blur(10px);
+    }
+    .user .bubble { background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3); }
+    
+    /* HIDE STREAMLIT UGLINESS */
+    div[data-testid="stToolbar"] { visibility: hidden; }
+    div[data-testid="stDecoration"] { visibility: hidden; }
+    div[data-testid="stStatusWidget"] { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    
+    /* HIDDEN INPUT HACK FIX - Make it clickable but invisible so focus works */
     div[data-testid="stChatInput"] { 
-        position: fixed; 
-        bottom: -500px; 
-        opacity: 0; 
-        pointer-events: none;
+        position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); 
+        width: 80% !important; z-index: 1000; opacity: 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Logo
-if LOGO_PATH.exists():
-    with open(LOGO_PATH, "rb") as f:
-        logo_b64 = base64.b64encode(f.read()).decode()
-    st.markdown(f'<div class="logo-container"><img src="data:image/png;base64,{logo_b64}" class="logo-img"></div>', unsafe_allow_html=True)
-st.markdown(f'<h1 class="title">AURA</h1>', unsafe_allow_html=True)
+# --- HEADER AREA ---
+col_logo, col_title = st.columns([1, 6])
+with col_title:
+    st.markdown('<div class="hero-container"><div class="neon-text">AURA AI</div></div>', unsafe_allow_html=True)
 
-# Sidebar
-with st.sidebar:
-    st.markdown("### ⚙️ SYSTEM CONTROL")
-    v_identity = st.radio("VOICE IDENTITY", ["Female", "Male"])
-    st.divider()
-    vault_toggle = st.toggle("Open Neural Vault", value=False)
-    if st.button("Purge Session"):
-        st.session_state.history = []
-        st.session_state.active = False
-        st.session_state.speak_text = None
-        st.session_state.thinking = False
-        st.rerun()
+# --- VISUAL ORB ---
+def render_orb():
+    state = st.session_state.processing_state
+    css_class = ""
+    status_text = "SYSTEM READY"
+    
+    # Check if we are ACTUALLY active (from toggle)
+    # But for visuals, we use processing_state
+    
+    if state == "thinking":
+        css_class = "thinking"
+        status_text = "PROCESSING..."
+    elif state == "speaking":
+        css_class = "speaking"
+        status_text = "SPEAKING..."
+    elif st.session_state.voice_active: # If active but idle
+        css_class = "active"
+        status_text = "LISTENING..."
+            
+    st.markdown(f"""
+        <div class="orb-stage {css_class}">
+            <div class="ring r1"></div>
+            <div class="ring r2"></div>
+            <div class="core-orb"></div>
+        </div>
+        <div class="status-badge">{status_text}</div>
+    """, unsafe_allow_html=True)
 
-# --- THE TITAN BRIDGE (UNSTOPPABLE CONNECTION) ---
+# --- THE TITAN BRIDGE (CLIENT-SIDE CLICK TO TRIGGER) ---
 def titan_bridge():
-    gender = v_identity.lower()
-    payload = st.session_state.speak_text if st.session_state.speak_text else ""
+    # Retrieve payload (text to speak)
+    payload = st.session_state.audio_queue if st.session_state.audio_queue else ""
     
     js_code = f"""
-        <script>
-            var isActive = {json.dumps(st.session_state.active)};
-            var speakText = {json.dumps(payload)};
-            var gender = "{gender}";
+        <style>
+            .bridge-control {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+                margin: 20px 0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+            .mic-btn {{
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                color: white;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 30px;
+                font-size: 1.2rem;
+                font-weight: bold;
+                cursor: pointer;
+                box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+                transition: transform 0.2s, box-shadow 0.2s;
+                font-family: 'Outfit', sans-serif;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }}
+            .mic-btn:hover {{ transform: scale(1.05); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6); }}
+            .mic-btn:active {{ transform: scale(0.95); }}
+            .mic-btn.active {{ background: #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }}
+            
+            .indicator {{ margin-top: 10px; font-size: 0.9rem; color: #94a3b8; font-family: monospace; }}
+        </style>
 
+        <div class="bridge-control">
+            <button id="micToggle" class="mic-btn" onclick="toggleVoice()">
+                🎤 Activate System
+            </button>
+            <div id="statusInd" class="indicator">Click to Start Interaction</div>
+        </div>
+
+        <script>
+            var speakText = {json.dumps(payload)};
+            var recognition = null;
+            var isListening = false;
+            var synth = window.speechSynthesis;
+
+            // --- UI UPDATE ---
+            function updateUI(status, isActive) {{
+                const btn = document.getElementById('micToggle');
+                const ind = document.getElementById('statusInd');
+                if(!btn || !ind) return;
+                
+                ind.innerText = status;
+                if (isActive) {{
+                    btn.classList.add('active');
+                    btn.innerHTML = "🛑 Stop / Reset";
+                }} else {{
+                    btn.classList.remove('active');
+                    btn.innerHTML = "🎤 Activate System";
+                }}
+            }}
+
+            // --- PYTHON BRIDGE ---
             function bridgeToPython(text) {{
                 const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
                 const submit = window.parent.document.querySelector('button[data-testid="stChatInputSubmitButton"]');
                 if (input) {{
-                    input.value = text;
+                    // Set value
+                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                    nativeTextAreaValueSetter.call(input, text);
                     input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    
+                    // Click submit
                     setTimeout(() => {{
                         if (submit) submit.click();
                         else {{
-                           const enter = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }});
-                           input.dispatchEvent(enter);
+                            const enter = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }});
+                            input.dispatchEvent(enter);
                         }}
                     }}, 100);
                 }}
             }}
 
-            function runCycle() {{
-                if (!isActive) return;
-
-                if (speakText) {{
-                    window.speechSynthesis.cancel();
-                    var attempt = function() {{
-                        var voices = window.speechSynthesis.getVoices();
-                        if (voices.length === 0) {{ setTimeout(attempt, 200); return; }}
-                        var msg = new SpeechSynthesisUtterance(speakText);
-                        var target = voices.find(v => {{
-                            var n = v.name.toLowerCase();
-                            if (gender === 'female') return n.includes('female') || n.includes('aria') || n.includes('samantha');
-                            return n.includes('male') || n.includes('david') || n.includes('alex');
-                        }});
-                        msg.voice = target || voices[0];
-                        msg.rate = 1.15;
-                        msg.onend = function() {{ setTimeout(startListening, 300); }};
-                        window.speechSynthesis.speak(msg);
-                    }};
-                    attempt();
-                }} else {{
-                    startListening();
+            // --- SPEECH RECOGNITION ---
+            function initRecognition() {{
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {{
+                    alert("⚠️ Browser not supported. Use Chrome/Edge.");
+                    return null;
                 }}
-            }}
-
-            function startListening() {{
-                if (!isActive) return;
-                var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!Recognition) return;
                 
-                var r = new Recognition();
+                const r = new SpeechRecognition();
                 r.lang = 'en-US';
-                r.onresult = function(e) {{
-                    var t = e.results[0][0].transcript;
+                r.continuous = false;
+                r.interimResults = false;
+                
+                r.onstart = () => updateUI("👂 Listening...", true);
+                r.onend = () => {{
+                    // Auto-restart if we think we should be listening? 
+                    // No, let's keep it manual/controlled for stability. 
+                    if (isListening) {{
+                         // If it stopped unexpectedly, restart
+                         try {{ r.start(); }} catch(e) {{}}
+                    }} else {{
+                         updateUI("💤 Interaction Paused", false);
+                    }}
+                }};
+                
+                r.onresult = (e) => {{
+                    const t = e.results[0][0].transcript;
+                    isListening = false; // Stop listening while processing
+                    r.stop();
+                    updateUI("✨ Heard: " + t, true);
                     bridgeToPython(t);
                 }};
-                r.onerror = function() {{ if (isActive) setTimeout(startListening, 1000); }};
-                r.start();
+                
+                r.onerror = (e) => {{
+                    console.warn(e.error);
+                    if (e.error === 'not-allowed') {{
+                        isListening = false;
+                        updateUI("⚠️ Access Denied", false);
+                        alert("⚠️ MICROPHONE BLOCKED. Check URL bar permission.");
+                    }}
+                }};
+                
+                return r;
             }}
 
-            if (window.speechSynthesis.onvoiceschanged !== undefined) {{
-                window.speechSynthesis.onvoiceschanged = runCycle;
+            // --- TTS ---
+            function speak(text) {{
+                if (!text) return;
+                synth.cancel();
+                
+                // Stop listening so we don't hear ourselves
+                if (recognition) {{
+                    recognition.stop(); 
+                    isListening = false;
+                }}
+                
+                const utter = new SpeechSynthesisUtterance(text);
+                const voices = synth.getVoices();
+                const target = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha")) || voices[0];
+                
+                utter.voice = target;
+                utter.rate = 1.1;
+                
+                utter.onstart = () => updateUI("🔉 Speaking...", true);
+                
+                utter.onend = () => {{
+                    // Resume listening if we were in a "chat mode"
+                    // For manual button approach, we might want to wait for user?
+                    // Let's AUTO-RESUME listening to keep the conversation flowing!
+                    updateUI("👂 Listening...", true);
+                    isListening = true;
+                    if(!recognition) recognition = initRecognition();
+                    try {{ recognition.start(); }} catch(e) {{}}
+                }};
+                
+                synth.speak(utter);
             }}
-            setTimeout(runCycle, 600);
+
+            // --- MAIN TOGGLE ---
+            function toggleVoice() {{
+                if (!recognition) recognition = initRecognition();
+                
+                // If currently speaking, stop everything
+                if (synth.speaking) {{
+                    synth.cancel();
+                    isListening = false;
+                    if(recognition) recognition.stop();
+                    updateUI("💤 Force Stopped", false);
+                    return;
+                }}
+
+                if (!isListening) {{
+                    // START LISTENING
+                    isListening = true;
+                    try {{ recognition.start(); }} catch(e) {{}}
+                    
+                    // If we have pending text to speak (from Python load), speak it now!
+                    if (speakText && speakText.length > 0) {{
+                        speak(speakText);
+                    }}
+                }} else {{
+                    // STOP
+                    isListening = false;
+                    recognition.stop();
+                    synth.cancel();
+                    updateUI("💤 System Offline", false);
+                }}
+            }}
+            
+            // --- ON LOAD ---
+            // If we have text to speak, we can't auto-speak without click.
+            // We gently prompt the user or rely on the toggle.
+            if (speakText && speakText.length > 0) {{
+                 setTimeout(() => {{
+                     const ind = document.getElementById('statusInd');
+                     if(ind) ind.innerText = "💬 Response Ready! Click 'Activate' to hear it.";
+                 }}, 200);
+            }}
+
         </script>
     """
-    st.components.v1.html(js_code, height=0)
+    st.components.v1.html(js_code, height=180)
 
-# Connect
-col1, col2, col3 = st.columns([1, 1, 1])
-with col2:
-    if not st.session_state.active:
-        if st.button("🔌LETS START "):
-            st.session_state.active = True
-            st.rerun()
-    else:
-        st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
-        if st.button("🛑 DISCONNECT LINK"):
-            st.session_state.active = False
-            st.session_state.speak_text = None
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# Status
-orb_placeholder = st.empty()
-status_placeholder = st.empty()
-
-orb_class = "active" if st.session_state.active else ""
-status_label = "AURA IS READY & LISTENING" if st.session_state.active else "SYSTEM OFFLINE"
-
-if st.session_state.thinking:
-    orb_class = "thinking"
-    status_label = "AURA IS THINKING"
-elif st.session_state.speak_text:
-    orb_class = "speaking"
-    status_label = "AURA IS RESPONDING"
-
-orb_placeholder.markdown(f'<div class="orb-box"><div class="orb {orb_class}"></div></div>', unsafe_allow_html=True)
-status_placeholder.markdown(f'<div class="status">{status_label}</div>', unsafe_allow_html=True)
-
-# The Titan Portal (Data Gateway)
-user_input = st.chat_input("Neural Link Active...")
-
-if user_input and st.session_state.active:
-    st.session_state.thinking = True
-    orb_placeholder.markdown(f'<div class="orb-box"><div class="orb thinking"></div></div>', unsafe_allow_html=True)
-    status_placeholder.markdown(f'<div class="status">AURA IS THINKING</div>', unsafe_allow_html=True)
-    
-    st.session_state.history.append({"role": "user", "text": user_input})
+# --- BRAIN (GROQ + TOOLS) ---
+def process_brain(user_input):
     client = Groq(api_key=api_key)
-    msgs = [{"role": "system", "content": "You are Aura. Be concise, fast, and natural like Alexa. NO text/keyboard talk."}]
-    for turn in st.session_state.history[-8:]:
-        msgs.append({"role": "user" if turn['role']=='user' else "assistant", "content": turn['text']})
     
+    # 1. Build Context
+    messages = [
+        {
+            "role": "system", 
+            "content": """
+            You are AURA, an advanced AI interface. 
+            Traits: Precise, Intelligent, Fast, Helpful. 
+            If the user asks for current info, stocks, or news, USE THE SEARCH TOOL.
+            Keep answers concise (under 3 sentences) for voice response.
+            """
+        }
+    ]
+    
+    # Add recent history
+    recent_history = st.session_state.history[-4:]
+    for turn in recent_history:
+        messages.append({"role": turn["role"], "content": turn["content"]})
+    
+    messages.append({"role": "user", "content": user_input})
+    
+    # 2. Inference
     try:
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=150)
-        answer = res.choices[0].message.content
-        save_to_db(user_input, answer)
-        st.session_state.history.append({"role": "bot", "text": answer})
-        st.session_state.speak_text = answer
-    except:
-        st.session_state.speak_text = "I encountered a neural drift. Please try again."
+        completion = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=256
+        )
+        
+        msg = completion.choices[0].message
+        
+        # 3. Tool Calling Handling
+        if msg.tool_calls:
+            st.session_state.processing_state = "thinking"
+            render_orb() # Update UI visual
+            
+            tool_call = msg.tool_calls[0]
+            if tool_call.function.name == "search_web":
+                args = json.loads(tool_call.function.arguments)
+                st.toast(f"🔎 Searching Web: {args['query']}")
+                search_res = search_web(args['query'])
+                
+                # Feed tool output back
+                messages.append(msg)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": str(search_res)
+                })
+                
+                # Final response
+                final_res = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=messages,
+                    max_tokens=256
+                )
+                return final_res.choices[0].message.content
+                
+        return msg.content
+
+    except Exception as e:
+        return f"I encountered a neural error: {str(e)}"
+
+# --- MAIN CONTROLLER ---
+
+# 1. Control Sidebar
+with st.sidebar:
+    st.header("⚡ SYSTEM")
+    if st.button("🗑️ Clear Memory"):
+        st.session_state.history = []
+        st.rerun()
+
+# 2. Render Orb (Top Center)
+render_orb()
+
+# 3. Render Manual Bridge (The Microphone Button)
+titan_bridge()
+
+# 4. Hidden Input & Logic Loop
+user_input = st.chat_input("Type or Speak...", key="main_input") # Receiver for JS
+
+if user_input:
+    # Set state
+    st.session_state.processing_state = "thinking"
+    st.session_state.history.append({"role": "user", "content": user_input})
     
-    st.session_state.thinking = False
+    # Process
+    with st.spinner("Processing..."):
+        response = process_brain(user_input)
+    
+    # Save
+    st.session_state.history.append({"role": "assistant", "content": response})
+    st.session_state.audio_queue = response # Set for TTS
+    st.session_state.processing_state = "speaking"
+    
+    save_interaction(user_input, response)
     st.rerun()
 
-# Trigger Neural Bridge
-if st.session_state.active:
-    titan_bridge()
-    st.session_state.speak_text = None
+# 5. Clear queue after render if it was consumed? 
+# Actually we need it to persist for the JS to read it on this run.
+# The JS reads `speakText` from python on load.
+# We clear it on the *next* run or never? 
+# Streamlit re-runs script top-to-bottom. 
+# If we clear it here, next re-run will be empty. That is correct.
+# BUT wait, the `titan_bridge` function runs above. It has ALREADY read the queue into the JS string.
+# So we can safely clear it here so it doesn't speak again on next refresh.
+st.session_state.audio_queue = None
 
-# History
+# 6. Display History
 if st.session_state.history:
-    st.divider()
-    st.markdown('<div class="synapse-header">🧬 ACTIVE SYNAPSES</div>', unsafe_allow_html=True)
-    for m in reversed(st.session_state.history[-6:]):
-        color = "#6366f1" if m['role'] == 'user' else "#ec4899"
-        role_label = "👤 YOU" if m['role'] == 'user' else "✨ AURA"
+    st.markdown("<br>", unsafe_allow_html=True)
+    for msg in reversed(st.session_state.history[-6:]):
+        role_cls = "user" if msg["role"] == "user" else "aura"
         st.markdown(f"""
-            <div class="chat-card" style="border-left: 4px solid {color};">
-                <b style="color:{color}; letter-spacing: 1px;">{role_label}</b><br>
-                <span style="font-size: 1.1rem; line-height: 1.6;">{m["text"]}</span>
+            <div class="chat-row {role_cls}">
+                <div class="bubble">
+                    <small style="opacity:0.5">{msg['role'].upper()}</small><br>
+                    {msg['content']}
+                </div>
             </div>
         """, unsafe_allow_html=True)
-
-# Vault
-if vault_toggle:
-    st.divider()
-    st.markdown('<div class="synapse-header">🏛️ NEURAL VAULT</div>', unsafe_allow_html=True)
-    for entry in get_vault_data():
-        with st.expander(f"📍 {entry[0]} | {entry[1][:30]}..."):
-            st.write(f"**You:** {entry[1]}")
-            st.write(f"**Aura:** {entry[2]}")

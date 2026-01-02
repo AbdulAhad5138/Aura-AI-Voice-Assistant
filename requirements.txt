@@ -2,3 +2,4 @@ groq
 python-dotenv
 streamlit
 Pillow
+duckduckgo-search
