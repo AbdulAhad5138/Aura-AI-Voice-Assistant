@@ -442,17 +442,19 @@ def process_brain(user_input):
     client = Groq(api_key=api_key)
     
     # 1. Build Context
-    messages = [
-        {
-            "role": "system", 
-            "content": """
-            You are AURA, an advanced AI.
-            Traits: Intelligent, Fast, Helpful. 
-            If the user asks for current info/news, YOU MUST USE THE search_web TOOL.
-            Keep voice answers concise (under 2 sentences).
-            """
-        }
-    ]
+    sys_prompt = """
+    You are AURA, an advanced AI.
+    Traits: Intelligent, Fast, Helpful. 
+    
+    TOOL USE RULES:
+    - If the user asks for current info/news, YOU MUST USE THE search_web TOOL.
+    - AFTER calling the tool, you will receive the search results. 
+    - You MUST then read those results and Synthesize a clear, direct answer to the user's question.
+    - Do NOT just say "search results found". Answer the question using the data!
+    - Keep voice answers concise (under 2 sentences) but informative.
+    """
+    
+    messages = [{"role": "system", "content": sys_prompt}]
     
     # Add recent history
     recent_history = st.session_state.history[-4:]
@@ -484,6 +486,7 @@ def process_brain(user_input):
                 st.toast(f"🔎 Searching Web: {args['query']}")
                 search_res = search_web(args['query'])
                 
+                # Feed tool output back
                 messages.append(msg)
                 messages.append({
                     "role": "tool",
@@ -491,6 +494,8 @@ def process_brain(user_input):
                     "content": str(search_res)
                 })
                 
+                # Final response (Second Turn)
+                # We need to tell the model to use the tool info to answer
                 final_res = client.chat.completions.create(
                     model=GROQ_MODEL,
                     messages=messages,
@@ -501,11 +506,11 @@ def process_brain(user_input):
         return msg.content
 
     except Exception as e:
-        # Fallback for Tool Error (400) logic
+        # Fallback
         if "tool_use_failed" in str(e) or "400" in str(e):
              st.error("Tool Error - Retrying basic response")
              try:
-                 # Retry without tools
+                 messages.append({"role": "user", "content": "Please answer without tools if possible."})
                  completion = client.chat.completions.create(
                     model=GROQ_MODEL,
                     messages=messages,
@@ -518,16 +523,18 @@ def process_brain(user_input):
 
 # --- MAIN CONTROLLER ---
 
-# 1. Control Sidebar
-with st.sidebar:
-    st.header("⚡ SYSTEM")
-    # Voice Gender Selection
-    if 'v_gender' not in st.session_state: st.session_state.v_gender = "Female"
-    st.session_state.v_gender = st.radio("Voice Gender", ["Female", "Male"])
-    
-    if st.button("🗑️ Clear Memory"):
-        st.session_state.history = []
-        st.rerun()
+# 1. SETTINGS (Moved to Main Page for Mobile Access)
+with st.expander("⚙️ Settings & Customization", expanded=False):
+    c1, c2 = st.columns(2)
+    with c1:
+        # Voice Gender Selection
+        if 'v_gender' not in st.session_state: st.session_state.v_gender = "Female"
+        st.session_state.v_gender = st.radio("Voice Identity", ["Female", "Male"], horizontal=True)
+    with c2:
+        st.write("") # Spacer
+        if st.button("🗑️ Clear Memory Cache"):
+            st.session_state.history = []
+            st.rerun()
 
 # 2. Render Orb
 render_orb()
