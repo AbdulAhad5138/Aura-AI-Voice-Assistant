@@ -446,10 +446,10 @@ def process_brain(user_input):
         {
             "role": "system", 
             "content": """
-            You are AURA, an advanced AI interface. 
-            Traits: Precise, Intelligent, Fast, Helpful. 
-            If the user asks for current info, stocks, or news, USE THE SEARCH TOOL.
-            Keep answers concise (under 3 sentences) for voice response.
+            You are AURA, an advanced AI.
+            Traits: Intelligent, Fast, Helpful. 
+            If the user asks for current info/news, YOU MUST USE THE search_web TOOL.
+            Keep voice answers concise (under 2 sentences).
             """
         }
     ]
@@ -476,7 +476,7 @@ def process_brain(user_input):
         # 3. Tool Calling Handling
         if msg.tool_calls:
             st.session_state.processing_state = "thinking"
-            render_orb() # Update UI visual
+            render_orb() 
             
             tool_call = msg.tool_calls[0]
             if tool_call.function.name == "search_web":
@@ -484,7 +484,6 @@ def process_brain(user_input):
                 st.toast(f"🔎 Searching Web: {args['query']}")
                 search_res = search_web(args['query'])
                 
-                # Feed tool output back
                 messages.append(msg)
                 messages.append({
                     "role": "tool",
@@ -492,7 +491,6 @@ def process_brain(user_input):
                     "content": str(search_res)
                 })
                 
-                # Final response
                 final_res = client.chat.completions.create(
                     model=GROQ_MODEL,
                     messages=messages,
@@ -503,6 +501,19 @@ def process_brain(user_input):
         return msg.content
 
     except Exception as e:
+        # Fallback for Tool Error (400) logic
+        if "tool_use_failed" in str(e) or "400" in str(e):
+             st.error("Tool Error - Retrying basic response")
+             try:
+                 # Retry without tools
+                 completion = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=messages,
+                    max_tokens=256
+                )
+                 return completion.choices[0].message.content
+             except:
+                 pass
         return f"I encountered a neural error: {str(e)}"
 
 # --- MAIN CONTROLLER ---
@@ -510,14 +521,198 @@ def process_brain(user_input):
 # 1. Control Sidebar
 with st.sidebar:
     st.header("⚡ SYSTEM")
+    # Voice Gender Selection
+    if 'v_gender' not in st.session_state: st.session_state.v_gender = "Female"
+    st.session_state.v_gender = st.radio("Voice Gender", ["Female", "Male"])
+    
     if st.button("🗑️ Clear Memory"):
         st.session_state.history = []
         st.rerun()
 
-# 2. Render Orb (Top Center)
+# 2. Render Orb
 render_orb()
 
+# --- THE TITAN BRIDGE (HANDS-FREE LOOP) ---
+def titan_bridge():
+    # Retrieve payload
+    payload = st.session_state.audio_queue if st.session_state.audio_queue else ""
+    is_active = st.session_state.voice_active
+    gender_pref = st.session_state.v_gender.lower()
+    
+    js_code = f"""
+        <style>
+            .bridge-control {{ display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: rgba(255, 255, 255, 0.05); border-radius: 12px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1); }}
+            .mic-btn {{ background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; padding: 15px 30px; border-radius: 30px; font-size: 1.2rem; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4); transition: transform 0.2s; font-family: 'Outfit', sans-serif; display: flex; align-items: center; gap: 10px; }}
+            .mic-btn:hover {{ transform: scale(1.05); }}
+            .mic-btn.active {{ background: #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }}
+            .indicator {{ margin-top: 10px; font-size: 0.9rem; color: #94a3b8; font-family: monospace; }}
+        </style>
+
+        <div class="bridge-control">
+            <button id="micToggle" class="mic-btn" onclick="toggleVoice()">
+                🎤 Activate System
+            </button>
+            <div id="statusInd" class="indicator">Click to Start Interaction</div>
+        </div>
+
+        <script>
+            var speakText = {json.dumps(payload)};
+            var isActive = {json.dumps(is_active)};
+            var genderPref = "{gender_pref}";
+            
+            var recognition = null;
+            var isListening = false;
+            var synth = window.speechSynthesis;
+
+            function updateUI(status, active) {{
+                const btn = document.getElementById('micToggle');
+                const ind = document.getElementById('statusInd');
+                if(!btn || !ind) return;
+                ind.innerText = status;
+                if (active) {{
+                    btn.classList.add('active');
+                    btn.innerHTML = "🛑 Stop / Reset";
+                }} else {{
+                    btn.classList.remove('active');
+                    btn.innerHTML = "🎤 Activate System";
+                }}
+            }}
+
+            function bridgeToPython(text) {{
+                const input = window.parent.document.querySelector('textarea[data-testid="stChatInputTextArea"]');
+                const submit = window.parent.document.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                if (input) {{
+                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                    nativeTextAreaValueSetter.call(input, text);
+                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    setTimeout(() => {{
+                        if (submit) submit.click();
+                        else {{
+                            const enter = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }});
+                            input.dispatchEvent(enter);
+                        }}
+                    }}, 100);
+                }}
+            }}
+
+            function initRecognition() {{
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) return null;
+                const r = new SpeechRecognition();
+                r.lang = 'en-US';
+                r.continuous = false;
+                r.interimResults = false;
+                r.onstart = () => updateUI("👂 Listening...", true);
+                r.onend = () => {{
+                    if (isListening) {{
+                         try {{ r.start(); }} catch(e) {{}}
+                    }}
+                }};
+                r.onresult = (e) => {{
+                    const t = e.results[0][0].transcript;
+                    isListening = false; // Stop listening to process
+                    r.stop();
+                    updateUI("✨ Heard: " + t, true);
+                    bridgeToPython(t);
+                }};
+                return r;
+            }}
+
+            function speak(text) {{
+                if (!text) return;
+                synth.cancel();
+                if (recognition) {{ recognition.stop(); isListening = false; }}
+                
+                const utter = new SpeechSynthesisUtterance(text);
+                const voices = synth.getVoices();
+                
+                // Gender Selection Logic
+                let target = null;
+                if (genderPref === 'male') {{
+                    target = voices.find(v => v.name.toLowerCase().includes("male") || v.name.includes("David") || v.name.includes("Microsoft")) || voices[0];
+                }} else {{
+                    target = voices.find(v => v.name.toLowerCase().includes("female") || v.name.includes("Google US English") || v.name.includes("Samantha")) || voices[0];
+                }}
+                
+                utter.voice = target;
+                utter.rate = 1.1;
+                
+                utter.onstart = () => updateUI("🔉 Speaking...", true);
+                utter.onend = () => {{
+                    // AUTO-RESUME LISTENING (HANDS FREE)
+                    updateUI("👂 Listening...", true);
+                    isListening = true;
+                    if(!recognition) recognition = initRecognition();
+                    try {{ recognition.start(); }} catch(e) {{}}
+                }};
+                
+                synth.speak(utter);
+            }}
+
+            function toggleVoice() {{
+                // This function is manually clicking the button
+                // It toggles the global state visually, but actually we rely on 'isActive' from Python for logic
+                if (!recognition) recognition = initRecognition();
+                
+                if (synth.speaking || isListening) {{
+                     // Stop
+                     synth.cancel();
+                     isListening = false;
+                     recognition.stop();
+                     updateUI("💤 Paused", false);
+                }} else {{
+                     // Start
+                     isListening = true;
+                     try {{ recognition.start(); }} catch(e) {{}}
+                }}
+            }}
+            
+            // --- AUTO-RUN LOGIC (The Fix) ---
+            if (isActive) {{
+                // If Python says we are active (meaning user clicked it previously)
+                // We try to resume immediately.
+                if (speakText) {{
+                    setTimeout(() => speak(speakText), 500); 
+                }} else {{
+                    setTimeout(() => {{
+                        if (!recognition) recognition = initRecognition();
+                        isListening = true;
+                        try {{ recognition.start(); }} catch(e) {{}}
+                    }}, 500);
+                }}
+            }}
+
+        </script>
+    """
+    st.components.v1.html(js_code, height=180)
+
 # 3. Render Manual Bridge (The Microphone Button)
+if 'voice_active' not in st.session_state: st.session_state.voice_active = False
+
+# We need a way to Toggle Active State in Python so it persists
+# The previous button handled this inside the Js effectively, but we need Python to know.
+# Actually, the 'Hands Free' relies on Python re-rendering with is_active=True.
+# We'll use a hidden button or just rely on the fact that if 'audio_queue' is present, we imply active?
+# No, we need an explicit toggle.
+
+# Let's add a REAL Python toggle to control "System Power"
+# We'll put it above the bridge or use the sidebar
+col_c1, col_c2 = st.columns([1,1])
+with col_c1:
+    # If user clicks this, we set voice_active = True
+    # The JS will then see isActive=True and auto-start.
+    if st.button("🔴 RESET / STOP"):
+        st.session_state.voice_active = False
+        st.rerun()
+
+with col_c2:
+    if not st.session_state.voice_active:
+        if st.button("🟢 AUTO-START"):
+            st.session_state.voice_active = True
+            st.rerun()
+    else:
+        st.success("System Active")
+
 titan_bridge()
 
 # 4. Hidden Input & Logic Loop
